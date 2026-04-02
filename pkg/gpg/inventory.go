@@ -107,7 +107,7 @@ func (c *Client) DiscoverCard(ctx context.Context) (*YubiKeyEntry, error) {
 			if keys[i].Fingerprint == cardFP {
 				ref := SubKeyRef{
 					KeyID:   keys[i].KeyID,
-					Usage:   usageLabel(keys[i].Usage),
+					Usage:   UsageLabel(keys[i].Usage),
 					Created: keys[i].Created,
 				}
 				if !keys[i].Expires.IsZero() {
@@ -122,8 +122,8 @@ func (c *Client) DiscoverCard(ctx context.Context) (*YubiKeyEntry, error) {
 	return entry, nil
 }
 
-// usageLabel converts a usage code to a human-readable label.
-func usageLabel(usage string) string {
+// UsageLabel converts a usage code to a human-readable label.
+func UsageLabel(usage string) string {
 	switch strings.ToLower(usage) {
 	case "s":
 		return "sign"

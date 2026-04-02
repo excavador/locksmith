@@ -126,7 +126,7 @@ gpgsmith vault discard              # read-only, nothing to seal
 
 ```
 gpgsmith
-├── setup                  first-time wizard: vault create + keys create + card provision
+├── setup                  first-time wizard: vault create + keys create + card provision (planned)
 ├── vault                  manage encrypted vault
 │   ├── create             create a new vault
 │   ├── import <path>      import existing GNUPGHOME as first snapshot
@@ -134,12 +134,12 @@ gpgsmith
 │   ├── seal <message>     save current session as new snapshot
 │   ├── discard            discard session without saving
 │   ├── list               list all snapshots
-│   ├── restore <ref>      decrypt a specific snapshot
+│   ├── restore <ref>      restore a specific snapshot and start session
 │   └── config
 │       ├── show           show vault config
 │       └── set <k> <v>    set a vault config value
 ├── keys                   GPG key operations (requires GNUPGHOME set via vault open)
-│   ├── create             generate new master key and subkeys
+│   ├── create             generate new master key and subkeys (planned)
 │   ├── generate           add new S/E/A subkeys
 │   ├── to-card            move subkeys to YubiKey (--same-keys / --unique-keys)
 │   ├── list               list keys and subkeys
@@ -151,7 +151,7 @@ gpgsmith
 │       ├── show           show GPG config (inside GNUPGHOME)
 │       └── set <k> <v>    set a GPG config value
 ├── card                   high-level YubiKey workflows (requires GNUPGHOME set via vault open)
-│   ├── provision <label>  generate subkeys + to-card + publish + ssh-pubkey
+│   ├── provision <label>  generate subkeys + to-card + publish + ssh-pubkey (--description, --same-keys / --unique-keys)
 │   ├── rotate <label>     revoke old + generate new + to-card + publish + ssh
 │   ├── revoke <label>     revoke all subkeys for a card + publish revocation
 │   ├── inventory          list all known YubiKeys
@@ -167,6 +167,9 @@ gpgsmith
 workflows that compose `keys` operations internally.
 
 All `keys` and `card` commands require `GNUPGHOME` to be set (via `vault open`).
+
+`vault create`, `vault import`, `vault open`, and `vault restore` all support
+`--no-interactive` to output env exports instead of spawning a shell.
 
 ### Global flags
 
@@ -257,8 +260,8 @@ gpgsmith follows the **ssh-agent pattern** for session management.
 
 ### Interactive mode (default when TTY detected)
 
-`vault open` spawns `$SHELL` with `GNUPGHOME` set. On shell exit, prompts to
-seal or discard:
+`vault open` (and `create`, `import`, `restore`) spawns `$SHELL` with
+`GNUPGHOME` set. On shell exit, prompts to seal or discard:
 
 ```bash
 $ gpgsmith vault open
@@ -276,10 +279,13 @@ Sealed: 2026-04-01T153000Z_rotated-subkeys.tar.age
 Like `ssh-agent` -- outputs shell exports to stdout:
 
 ```bash
-eval $(gpgsmith vault open)              # export GNUPGHOME=/dev/shm/gpgsmith-abc123;
+eval $(gpgsmith vault open)              # export GNUPGHOME=...; export GPGSMITH_VAULT_KEY=...;
 gpgsmith card rotate green               # uses GNUPGHOME from env
-eval $(gpgsmith vault seal "rotated")    # unset GNUPGHOME;
+eval $(gpgsmith vault seal "rotated")    # unset GNUPGHOME; unset GPGSMITH_VAULT_KEY;
 ```
+
+`GPGSMITH_VAULT_KEY` is exported so that subsequent vault commands in the same
+scripted session skip the passphrase prompt.
 
 ### TTY detection
 
@@ -322,8 +328,8 @@ publish_targets:
 2. Config files (vault config + GPG config after open)
 3. CLI flags
 
-No environment variables for configuration. `GNUPGHOME` is the only env var,
-used as session state.
+No environment variables for configuration. `GNUPGHOME` and `GPGSMITH_VAULT_KEY`
+are env vars used as session state (not configuration).
 
 ## Project Structure
 

@@ -106,11 +106,21 @@ func keysToCard(ctx context.Context, cmd *cli.Command) error {
 		return err
 	}
 
+	uniqueKeys := cmd.Bool("unique-keys")
+
+	// --unique-keys: generate fresh subkeys before moving to card.
+	if uniqueKeys {
+		if err := client.GenerateSubkeys(ctx, gpg.SubkeyOpts{
+			MasterFP: cfg.MasterFP,
+			Algo:     cfg.SubkeyAlgo,
+			Expiry:   cfg.SubkeyExpiry,
+		}); err != nil {
+			return fmt.Errorf("to-card: generate subkeys: %w", err)
+		}
+	}
+
 	// S/E/A subkeys are typically indices 1, 2, 3 after the master key.
 	indices := []int{1, 2, 3}
-
-	_ = cmd.Bool("same-keys")
-	_ = cmd.Bool("unique-keys")
 
 	return client.MoveToCard(ctx, cfg.MasterFP, indices)
 }

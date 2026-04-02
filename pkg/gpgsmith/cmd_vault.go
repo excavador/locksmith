@@ -1,12 +1,14 @@
 package gpgsmith
 
 import (
+	"bufio"
 	"context"
 	"fmt"
 	"log/slog"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"text/tabwriter"
 
 	"github.com/urfave/cli/v3"
@@ -74,7 +76,13 @@ func vaultCmd() *cli.Command {
 				Name:      "restore",
 				Usage:     "decrypt a specific snapshot",
 				ArgsUsage: "<ref>",
-				Action:    vaultRestore,
+				Flags: []cli.Flag{
+					&cli.BoolFlag{
+						Name:  "no-interactive",
+						Usage: "output env exports instead of spawning a shell",
+					},
+				},
+				Action: vaultRestore,
 			},
 			{
 				Name:  "config",
@@ -281,7 +289,7 @@ func startSession(ctx context.Context, v *vault.Vault, workdir string, cmd *cli.
 	}
 
 	// Scripted mode: output env exports.
-	fmt.Printf("export GNUPGHOME=%s;\n", workdir)
+	fmt.Printf("export GNUPGHOME='%s';\n", shellEscapeSingleQuote(workdir))
 	if pass := v.Passphrase(); pass != "" {
 		fmt.Printf("export GPGSMITH_VAULT_KEY='%s';\n", shellEscapeSingleQuote(pass))
 	}
@@ -312,8 +320,12 @@ func runInteractiveSession(ctx context.Context, v *vault.Vault, workdir string, 
 	// Prompt to seal or discard.
 	fmt.Fprint(os.Stderr, "Seal vault? [Y/n/message]: ")
 
+	scanner := bufio.NewScanner(os.Stdin)
 	var input string
-	if _, err := fmt.Scanln(&input); err != nil || input == "" {
+	if scanner.Scan() {
+		input = strings.TrimSpace(scanner.Text())
+	}
+	if input == "" {
 		input = "y"
 	}
 
@@ -338,7 +350,7 @@ func runInteractiveSession(ctx context.Context, v *vault.Vault, workdir string, 
 }
 
 func vaultSeal(ctx context.Context, cmd *cli.Command) error {
-	message := cmd.Args().First()
+	message := strings.Join(cmd.Args().Slice(), " ")
 	if message == "" {
 		return fmt.Errorf("seal requires a message")
 	}
@@ -420,8 +432,12 @@ func vaultRestore(ctx context.Context, cmd *cli.Command) error {
 		return err
 	}
 
-	fmt.Printf("export GNUPGHOME=%s;\n", workdir)
-	return nil
+	logger := loggerFrom(ctx)
+	logger.InfoContext(ctx, "restored snapshot",
+		slog.String("ref", ref),
+	)
+
+	return startSession(ctx, v, workdir, cmd, logger)
 }
 
 func vaultConfigShow(ctx context.Context, _ *cli.Command) error {

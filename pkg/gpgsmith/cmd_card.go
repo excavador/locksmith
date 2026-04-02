@@ -125,12 +125,29 @@ func cardProvision(ctx context.Context, cmd *cli.Command) error {
 		mode = "unique-keys"
 	}
 
+	// Build subkey refs from keys now on the card.
+	var subkeys []gpg.SubKeyRef
+	keys, listErr := client.ListKeys(ctx)
+	if listErr == nil {
+		for i := range keys {
+			if keys[i].CardSerial == info.Serial {
+				subkeys = append(subkeys, gpg.SubKeyRef{
+					KeyID:   keys[i].KeyID,
+					Usage:   gpg.UsageLabel(keys[i].Usage),
+					Created: keys[i].Created,
+					Expires: keys[i].Expires,
+				})
+			}
+		}
+	}
+
 	entry := gpg.YubiKeyEntry{
 		Serial:        info.Serial,
 		Label:         label,
 		Model:         info.Model,
 		Description:   cmd.String("description"),
 		Provisioning:  mode,
+		Subkeys:       subkeys,
 		ProvisionedAt: time.Now().UTC(),
 		Status:        "active",
 	}
@@ -218,6 +235,26 @@ func cardRotate(ctx context.Context, cmd *cli.Command) error {
 		logger.WarnContext(ctx, "ssh pubkey export failed",
 			slog.String("error", sshErr.Error()),
 		)
+	}
+
+	// Update inventory subkey refs with new keys on the card.
+	keys, listErr := client.ListKeys(ctx)
+	if listErr == nil {
+		var newSubkeys []gpg.SubKeyRef
+		for i := range keys {
+			if keys[i].CardSerial == entry.Serial {
+				newSubkeys = append(newSubkeys, gpg.SubKeyRef{
+					KeyID:   keys[i].KeyID,
+					Usage:   gpg.UsageLabel(keys[i].Usage),
+					Created: keys[i].Created,
+					Expires: keys[i].Expires,
+				})
+			}
+		}
+		entry.Subkeys = newSubkeys
+		if err := client.SaveInventory(inv); err != nil {
+			return fmt.Errorf("rotate: save inventory: %w", err)
+		}
 	}
 
 	// Audit.

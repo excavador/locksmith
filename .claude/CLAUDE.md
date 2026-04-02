@@ -19,6 +19,7 @@ GPG key lifecycle manager with YubiKey support and encrypted vault storage.
 
 ## Commands
 
+Prefer Justfile recipes over raw commands for build, test, lint:
 - `just build` — build binary to bin/gpgsmith
 - `just test` — run all tests
 - `just lint` — run golangci-lint

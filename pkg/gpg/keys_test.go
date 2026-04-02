@@ -427,13 +427,18 @@ func TestUsageLabel(t *testing.T) {
 		{"s", "sign"},
 		{"e", "encrypt"},
 		{"a", "auth"},
+		{"S", "sign"},
+		{"E", "encrypt"},
+		{"A", "auth"},
 		{"C", "C"},
+		{"SC", "SC"},
 		{"unknown", "unknown"},
+		{"", ""},
 	}
 	for _, tt := range tests {
-		got := usageLabel(tt.input)
+		got := UsageLabel(tt.input)
 		if got != tt.want {
-			t.Errorf("usageLabel(%q) = %q, want %q", tt.input, got, tt.want)
+			t.Errorf("UsageLabel(%q) = %q, want %q", tt.input, got, tt.want)
 		}
 	}
 }

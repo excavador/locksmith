@@ -98,8 +98,8 @@ func TestVaultPassphraseFromEnv(t *testing.T) {
 func TestVaultCmdHasNoInteractiveFlag(t *testing.T) {
 	cmd := vaultCmd()
 
-	// Verify create, import, and open all have no-interactive flag.
-	wantFlags := []string{"create", "import", "open"}
+	// Verify create, import, open, and restore all have no-interactive flag.
+	wantFlags := []string{"create", "import", "open", "restore"}
 	for _, name := range wantFlags {
 		t.Run(name, func(t *testing.T) {
 			var sub *cli.Command
@@ -121,6 +121,28 @@ func TestVaultCmdHasNoInteractiveFlag(t *testing.T) {
 			}
 			if !found {
 				t.Errorf("subcommand %q missing --no-interactive flag", name)
+			}
+		})
+	}
+}
+
+func TestShellEscapeSingleQuote(t *testing.T) {
+	tests := []struct {
+		input string
+		want  string
+	}{
+		{"simple", "simple"},
+		{"with space", "with space"},
+		{"it's", "it'\\''s"},
+		{"", ""},
+		{"don't stop", "don'\\''t stop"},
+		{"'''", "'\\'''\\'''\\''"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.input, func(t *testing.T) {
+			got := shellEscapeSingleQuote(tt.input)
+			if got != tt.want {
+				t.Errorf("shellEscapeSingleQuote(%q) = %q, want %q", tt.input, got, tt.want)
 			}
 		})
 	}
