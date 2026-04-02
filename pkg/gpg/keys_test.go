@@ -489,3 +489,59 @@ func TestNewClientDefaults(t *testing.T) {
 		t.Errorf("homeDir = %q, want %q", client.homeDir, dir)
 	}
 }
+
+func TestExtractSerialFromAppID(t *testing.T) {
+	tests := []struct {
+		appID string
+		want  string
+	}{
+		{"D2760001240103040006197506520000", "19750652"},
+		{"D2760001240103040006123456780000", "12345678"},
+		{"D2760001240103040006000000010000", "00000001"},
+		// Short input: returned as-is.
+		{"short", "short"},
+		{"", ""},
+	}
+	for _, tt := range tests {
+		t.Run(tt.appID, func(t *testing.T) {
+			got := extractSerialFromAppID(tt.appID)
+			if got != tt.want {
+				t.Errorf("extractSerialFromAppID(%q) = %q, want %q", tt.appID, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestParseColonsOutputPlusNotCard(t *testing.T) {
+	// "+" in field 14 means the key is locally available, NOT on a card.
+	// It should not be treated as a card serial.
+	data, err := os.ReadFile("../../testdata/list-secret-keys-plus.txt")
+	if err != nil {
+		t.Fatalf("read testdata: %v", err)
+	}
+
+	keys, err := parseColonsOutput(string(data))
+	if err != nil {
+		t.Fatalf("parseColonsOutput() error: %v", err)
+	}
+
+	// 1 master + 2 subkeys.
+	if len(keys) != 3 {
+		t.Fatalf("expected 3 keys, got %d", len(keys))
+	}
+
+	// Master key: "+" in field 14 should NOT produce a CardSerial.
+	if keys[0].CardSerial != "" {
+		t.Errorf("master CardSerial = %q, want empty (+ is not a card)", keys[0].CardSerial)
+	}
+
+	// Sign subkey: "+" in field 14 should NOT produce a CardSerial.
+	if keys[1].CardSerial != "" {
+		t.Errorf("sign subkey CardSerial = %q, want empty (+ is not a card)", keys[1].CardSerial)
+	}
+
+	// Encrypt subkey: real app ID should produce a serial.
+	if keys[2].CardSerial != "12345678" {
+		t.Errorf("encrypt subkey CardSerial = %q, want %q", keys[2].CardSerial, "12345678")
+	}
+}

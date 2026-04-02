@@ -108,8 +108,8 @@ func parseColonsOutput(output string) ([]SubKey, error) {
 			if fields[6] != "" {
 				k.Expires = parseEpoch(fields[6])
 			}
-			if len(fields) > 14 && fields[14] != "" {
-				k.CardSerial = fields[14]
+			if len(fields) > 14 && fields[14] != "" && strings.HasPrefix(fields[14], "D276") {
+				k.CardSerial = extractSerialFromAppID(fields[14])
 			}
 			keys = append(keys, k)
 			current = &keys[len(keys)-1]
@@ -199,6 +199,16 @@ func extractModelFromReader(reader string) string {
 	}
 
 	return strings.TrimSpace(reader)
+}
+
+// extractSerialFromAppID extracts the 8-character card serial from an OpenPGP
+// application ID string. The serial occupies positions 20-28 (0-indexed) of the
+// 32-character app ID (e.g. "D2760001240103040006197506520000" → "19750652").
+func extractSerialFromAppID(appID string) string {
+	if len(appID) >= 28 {
+		return appID[20:28]
+	}
+	return appID
 }
 
 // parseEpoch converts a Unix epoch string to time.Time.

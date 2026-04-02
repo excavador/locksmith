@@ -136,6 +136,8 @@ func keysList(ctx context.Context, _ *cli.Command) error {
 		return err
 	}
 
+	inv, _ := client.LoadInventory()
+
 	w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
 	_, _ = fmt.Fprintln(w, "KEY ID\tALGO\tUSAGE\tCREATED\tEXPIRES\tCARD")
 	for i := range keys {
@@ -145,7 +147,15 @@ func keysList(ctx context.Context, _ *cli.Command) error {
 		}
 		card := ""
 		if keys[i].CardSerial != "" {
-			card = keys[i].CardSerial
+			if inv != nil {
+				if entry := inv.FindByLabel(keys[i].CardSerial); entry != nil && entry.Label != "" {
+					card = entry.Label
+				} else {
+					card = keys[i].CardSerial
+				}
+			} else {
+				card = keys[i].CardSerial
+			}
 		}
 		_, _ = fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\t%s\n",
 			keys[i].KeyID,

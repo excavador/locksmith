@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"strings"
 	"text/tabwriter"
+	"time"
 
 	"github.com/urfave/cli/v3"
 	"golang.org/x/term"
@@ -183,6 +184,10 @@ func confirmPassphrases(readFn func(string) (string, error)) (string, error) {
 }
 
 func vaultCreate(ctx context.Context, cmd *cli.Command) error {
+	if os.Getenv("GPGSMITH_SESSION") == "1" {
+		return fmt.Errorf("already in a gpgsmith session, exit first")
+	}
+
 	logger := loggerFrom(ctx)
 
 	vaultDir := cmd.Root().String("vault-dir")
@@ -237,6 +242,10 @@ func vaultCreate(ctx context.Context, cmd *cli.Command) error {
 }
 
 func vaultImport(ctx context.Context, cmd *cli.Command) error {
+	if os.Getenv("GPGSMITH_SESSION") == "1" {
+		return fmt.Errorf("already in a gpgsmith session, exit first")
+	}
+
 	sourcePath := cmd.Args().First()
 	if sourcePath == "" {
 		return fmt.Errorf("import requires a source path")
@@ -267,6 +276,10 @@ func vaultImport(ctx context.Context, cmd *cli.Command) error {
 }
 
 func vaultOpen(ctx context.Context, cmd *cli.Command) error {
+	if os.Getenv("GPGSMITH_SESSION") == "1" {
+		return fmt.Errorf("already in a gpgsmith session, exit first")
+	}
+
 	if cmd.Args().Present() {
 		return fmt.Errorf("vault open does not accept arguments (use vault restore for a specific snapshot)")
 	}
@@ -350,7 +363,7 @@ func runInteractiveSession(ctx context.Context, v *vault.Vault, workdir string, 
 	case "n", "N", "no":
 		return v.Discard(ctx, workdir)
 	case "y", "Y", "yes":
-		snap, err := v.Seal(ctx, workdir, "manual-session")
+		snap, err := v.Seal(ctx, workdir, fmt.Sprintf("session-%s", time.Now().UTC().Format("2006-01-02")))
 		if err != nil {
 			return err
 		}
@@ -434,6 +447,10 @@ func vaultList(ctx context.Context, cmd *cli.Command) error {
 }
 
 func vaultRestore(ctx context.Context, cmd *cli.Command) error {
+	if os.Getenv("GPGSMITH_SESSION") == "1" {
+		return fmt.Errorf("already in a gpgsmith session, exit first")
+	}
+
 	ref := cmd.Args().First()
 	if ref == "" {
 		return fmt.Errorf("restore requires a snapshot reference")
