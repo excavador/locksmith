@@ -11,6 +11,7 @@ import (
 
 	"github.com/urfave/cli/v3"
 
+	"github.com/excavador/locksmith/pkg/audit"
 	"github.com/excavador/locksmith/pkg/gpg"
 )
 
@@ -114,10 +115,17 @@ func keysGenerate(ctx context.Context, _ *cli.Command) error {
 		return err
 	}
 
-	return client.GenerateSubkeys(ctx, gpg.SubkeyOpts{
+	if err := client.GenerateSubkeys(ctx, gpg.SubkeyOpts{
 		MasterFP: cfg.MasterFP,
 		Algo:     cfg.SubkeyAlgo,
 		Expiry:   cfg.SubkeyExpiry,
+	}); err != nil {
+		return err
+	}
+
+	return audit.Append(client.HomeDir(), audit.Entry{
+		Action:  "generate-subkeys",
+		Details: fmt.Sprintf("S/E/A %s expires %s", cfg.SubkeyAlgo, cfg.SubkeyExpiry),
 	})
 }
 
@@ -156,7 +164,17 @@ func keysToCard(ctx context.Context, cmd *cli.Command) error {
 		return fmt.Errorf("to-card: no S/E/A subkeys found")
 	}
 
-	return client.MoveToCard(ctx, cfg.MasterFP, keyIDs)
+	if err := client.MoveToCard(ctx, cfg.MasterFP, keyIDs); err != nil {
+		return err
+	}
+
+	return audit.Append(client.HomeDir(), audit.Entry{
+		Action:  "to-card",
+		Details: fmt.Sprintf("moved %d subkeys to card", len(keyIDs)),
+		Metadata: map[string]string{
+			"subkeys": strings.Join(keyIDs, ","),
+		},
+	})
 }
 
 func keysList(ctx context.Context, _ *cli.Command) error {
@@ -234,7 +252,17 @@ func keysRevoke(ctx context.Context, cmd *cli.Command) error {
 		return err
 	}
 
-	return client.Revoke(ctx, cfg.MasterFP, keyID)
+	if err := client.Revoke(ctx, cfg.MasterFP, keyID); err != nil {
+		return err
+	}
+
+	return audit.Append(client.HomeDir(), audit.Entry{
+		Action:  "revoke-subkey",
+		Details: fmt.Sprintf("revoked subkey %s", keyID),
+		Metadata: map[string]string{
+			"key_id": keyID,
+		},
+	})
 }
 
 func keysPublish(ctx context.Context, cmd *cli.Command) error {
@@ -288,6 +316,20 @@ func keysPublish(ctx context.Context, cmd *cli.Command) error {
 				slog.String("target", r.Target.Type),
 			)
 		}
+	}
+
+	// Audit successful publishes.
+	var published []string
+	for _, r := range results {
+		if r.Err == nil {
+			published = append(published, r.Target.Type)
+		}
+	}
+	if len(published) > 0 {
+		_ = audit.Append(client.HomeDir(), audit.Entry{
+			Action:  "publish",
+			Details: fmt.Sprintf("published to %s", strings.Join(published, ", ")),
+		})
 	}
 
 	return firstErr
