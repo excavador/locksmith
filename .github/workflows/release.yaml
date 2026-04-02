@@ -9,8 +9,41 @@ permissions:
   contents: write
 
 jobs:
+  ci:
+    name: CI
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: DeterminateSystems/nix-installer-action@main
+
+      - uses: DeterminateSystems/magic-nix-cache-action@main
+
+      - uses: jetify-com/devbox-install-action@v0.12.0
+        with:
+          enable-cache: true
+
+      - name: Tidy & format check
+        run: devbox run -- just tidy-check
+
+      - name: Deps
+        run: devbox run -- just deps
+
+      - name: Format
+        run: devbox run -- just fmt
+
+      - name: Lint
+        run: devbox run -- just lint
+
+      - name: Test
+        run: devbox run -- just test
+
+      - name: Build
+        run: devbox run -- just build
+
   release:
     name: Release
+    needs: ci
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -29,4 +62,3 @@ jobs:
         run: devbox run -- goreleaser release --clean
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          GOVERSION: ${{ env.GOVERSION }}
