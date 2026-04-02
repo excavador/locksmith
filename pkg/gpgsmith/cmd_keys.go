@@ -131,7 +131,7 @@ func keysList(ctx context.Context, _ *cli.Command) error {
 		return err
 	}
 
-	keys, err := client.ListKeys(ctx)
+	keys, err := client.ListSecretKeys(ctx)
 	if err != nil {
 		return err
 	}

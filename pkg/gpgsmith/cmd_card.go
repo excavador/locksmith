@@ -127,7 +127,7 @@ func cardProvision(ctx context.Context, cmd *cli.Command) error {
 
 	// Build subkey refs from keys now on the card.
 	var subkeys []gpg.SubKeyRef
-	keys, listErr := client.ListKeys(ctx)
+	keys, listErr := client.ListSecretKeys(ctx)
 	if listErr == nil {
 		for i := range keys {
 			if keys[i].CardSerial == info.Serial {
@@ -238,7 +238,7 @@ func cardRotate(ctx context.Context, cmd *cli.Command) error {
 	}
 
 	// Update inventory subkey refs with new keys on the card.
-	keys, listErr := client.ListKeys(ctx)
+	keys, listErr := client.ListSecretKeys(ctx)
 	if listErr == nil {
 		var newSubkeys []gpg.SubKeyRef
 		for i := range keys {
@@ -365,6 +365,17 @@ func cardDiscover(ctx context.Context, _ *cli.Command) error {
 		return err
 	}
 
+	// Check if card is already in inventory.
+	inv, err := client.LoadInventory()
+	if err != nil {
+		return fmt.Errorf("discover: load inventory: %w", err)
+	}
+
+	if existing := inv.FindByLabel(entry.Serial); existing != nil {
+		fmt.Fprintf(os.Stderr, "Already in inventory as %q (%s)\n", existing.Label, existing.Serial)
+		return nil
+	}
+
 	fmt.Printf("Found YubiKey: serial %s, model %s\n", entry.Serial, entry.Model)
 	for i := range entry.Subkeys {
 		fmt.Printf("  %s (%s)\n", entry.Subkeys[i].KeyID, entry.Subkeys[i].Usage)
@@ -387,11 +398,6 @@ func cardDiscover(ctx context.Context, _ *cli.Command) error {
 	entry.Description = desc
 
 	// Save to inventory.
-	inv, err := client.LoadInventory()
-	if err != nil {
-		return fmt.Errorf("discover: load inventory: %w", err)
-	}
-
 	inv.YubiKeys = append(inv.YubiKeys, *entry)
 	if err := client.SaveInventory(inv); err != nil {
 		return fmt.Errorf("discover: save inventory: %w", err)

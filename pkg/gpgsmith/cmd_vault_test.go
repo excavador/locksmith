@@ -126,6 +126,46 @@ func TestVaultCmdHasNoInteractiveFlag(t *testing.T) {
 	}
 }
 
+func TestVaultOpenRejectsPositionalArgs(t *testing.T) {
+	cmd := vaultCmd()
+
+	// Find the "open" subcommand.
+	var open *cli.Command
+	for _, c := range cmd.Commands {
+		if c.Name == "open" {
+			open = c
+			break
+		}
+	}
+	if open == nil {
+		t.Fatal("open subcommand not found")
+	}
+
+	// vault open should not have ArgsUsage (unlike vault restore which does).
+	if open.ArgsUsage != "" {
+		t.Errorf("vault open should not have ArgsUsage, got %q", open.ArgsUsage)
+	}
+}
+
+func TestVaultRestoreHasArgsUsage(t *testing.T) {
+	cmd := vaultCmd()
+
+	var restore *cli.Command
+	for _, c := range cmd.Commands {
+		if c.Name == "restore" {
+			restore = c
+			break
+		}
+	}
+	if restore == nil {
+		t.Fatal("restore subcommand not found")
+	}
+
+	if restore.ArgsUsage == "" {
+		t.Error("vault restore should have ArgsUsage for <ref>")
+	}
+}
+
 func TestShellEscapeSingleQuote(t *testing.T) {
 	tests := []struct {
 		input string

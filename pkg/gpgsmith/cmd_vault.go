@@ -267,6 +267,10 @@ func vaultImport(ctx context.Context, cmd *cli.Command) error {
 }
 
 func vaultOpen(ctx context.Context, cmd *cli.Command) error {
+	if cmd.Args().Present() {
+		return fmt.Errorf("vault open does not accept arguments (use vault restore for a specific snapshot)")
+	}
+
 	v, err := loadVault(ctx, cmd)
 	if err != nil {
 		return err
@@ -310,14 +314,18 @@ func runInteractiveSession(ctx context.Context, v *vault.Vault, workdir string, 
 	fmt.Fprintln(os.Stderr, "Entering gpgsmith shell. GNUPGHOME is set.")
 	fmt.Fprintln(os.Stderr, "Run gpgsmith commands or raw gpg. Type 'exit' when done.")
 
-	shellCmd := exec.CommandContext(ctx, shell) //nolint:gosec // shell from user's env
+	rc := newSessionRC(shell)
+	defer rc.cleanup()
+
+	shellCmd := exec.CommandContext(ctx, shell, rc.args...) //nolint:gosec // shell from user's env
 	shellCmd.Stdin = os.Stdin
 	shellCmd.Stdout = os.Stdout
 	shellCmd.Stderr = os.Stderr
 	shellCmd.Env = append(os.Environ(),
-		"GNUPGHOME="+workdir,
-		"GPGSMITH_SESSION=1",
-		"PS1=(gpgsmith) "+os.Getenv("PS1"),
+		append([]string{
+			"GNUPGHOME=" + workdir,
+			"GPGSMITH_SESSION=1",
+		}, rc.envs...)...,
 	)
 
 	if err := shellCmd.Run(); err != nil {

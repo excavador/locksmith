@@ -7,6 +7,21 @@ import (
 	"github.com/urfave/cli/v3"
 )
 
+func TestCardCmdSubcommands(t *testing.T) {
+	cmd := cardCmd()
+
+	want := []string{"provision", "rotate", "revoke", "inventory", "discover"}
+	got := make(map[string]bool)
+	for _, c := range cmd.Commands {
+		got[c.Name] = true
+	}
+	for _, name := range want {
+		if !got[name] {
+			t.Errorf("missing subcommand %q", name)
+		}
+	}
+}
+
 func TestCardDiscoverCmdExists(t *testing.T) {
 	cmd := cardCmd()
 
