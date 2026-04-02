@@ -261,7 +261,9 @@ gpgsmith follows the **ssh-agent pattern** for session management.
 ### Interactive mode (default when TTY detected)
 
 `vault open` (and `create`, `import`, `restore`) spawns `$SHELL` with
-`GNUPGHOME` set. On shell exit, prompts to seal or discard:
+`GNUPGHOME` set and a `(gpgsmith)` prompt prefix. The `GPGSMITH_SESSION=1`
+environment variable is also set, so you can customize your shell prompt in
+`.bashrc`/`.zshrc` based on it. On shell exit, prompts to seal or discard:
 
 ```bash
 $ gpgsmith vault open
@@ -328,8 +330,8 @@ publish_targets:
 2. Config files (vault config + GPG config after open)
 3. CLI flags
 
-No environment variables for configuration. `GNUPGHOME` and `GPGSMITH_VAULT_KEY`
-are env vars used as session state (not configuration).
+No environment variables for configuration. `GNUPGHOME`, `GPGSMITH_VAULT_KEY`,
+and `GPGSMITH_SESSION` are env vars used as session state (not configuration).
 
 ## Project Structure
 

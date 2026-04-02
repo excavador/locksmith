@@ -207,18 +207,23 @@ func vaultCreate(ctx context.Context, cmd *cli.Command) error {
 		)
 	}
 
+	// Create the vault directory.
+	if err := os.MkdirAll(vaultDir, 0o700); err != nil {
+		return fmt.Errorf("vault create: %w", err)
+	}
+	logger.InfoContext(ctx, "vault created",
+		slog.String("dir", vaultDir),
+	)
+
+	// Save config so future commands and loadVaultFirstUse work without --vault-dir.
 	cfg := &vault.Config{VaultDir: vaultDir}
-	v, err := vault.New(cfg, logger)
-	if err != nil {
-		return err
-	}
-
-	if err := v.Create(ctx); err != nil {
-		return err
-	}
-
-	// Save config so future commands work without --vault-dir.
 	if err := vault.SaveConfig("", cfg); err != nil {
+		return err
+	}
+
+	// Prompt passphrase (with confirmation) to establish vault identity.
+	v, err := loadVaultFirstUse(ctx, cmd)
+	if err != nil {
 		return err
 	}
 
@@ -309,7 +314,11 @@ func runInteractiveSession(ctx context.Context, v *vault.Vault, workdir string, 
 	shellCmd.Stdin = os.Stdin
 	shellCmd.Stdout = os.Stdout
 	shellCmd.Stderr = os.Stderr
-	shellCmd.Env = append(os.Environ(), "GNUPGHOME="+workdir)
+	shellCmd.Env = append(os.Environ(),
+		"GNUPGHOME="+workdir,
+		"GPGSMITH_SESSION=1",
+		"PS1=(gpgsmith) "+os.Getenv("PS1"),
+	)
 
 	if err := shellCmd.Run(); err != nil {
 		logger.DebugContext(ctx, "shell exited",
