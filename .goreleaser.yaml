@@ -16,10 +16,10 @@ builds:
       - -X main.Version={{.Version}}
       - -X main.Commit={{.Commit}}
       - -X main.Date={{.Date}}
-      - -X main.GoVersion={{.Env.GOVERSION}}
 
 archives:
-  - format: tar.gz
+  - formats:
+      - tar.gz
 
 checksum:
   name_template: checksums.txt

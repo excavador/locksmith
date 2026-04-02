@@ -8,12 +8,11 @@ import (
 )
 
 var (
-	Version   = "dev"
-	Commit    = "none"
-	Date      = "unknown"
-	GoVersion = "unknown"
+	Version = "dev"
+	Commit  = "none"
+	Date    = "unknown"
 )
 
 func main() {
-	os.Exit(gpgsmith.Main(Version, Commit, Date, GoVersion))
+	os.Exit(gpgsmith.Main(Version, Commit, Date))
 }

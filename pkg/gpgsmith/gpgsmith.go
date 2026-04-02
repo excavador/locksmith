@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"os"
 	"os/signal"
+	"runtime"
 	"syscall"
 
 	"github.com/urfave/cli/v3"
@@ -24,7 +25,7 @@ func loggerFrom(ctx context.Context) *slog.Logger {
 }
 
 // Main runs the gpgsmith CLI application and returns the exit code.
-func Main(version, commit, date, goVersion string) int {
+func Main(version, commit, date string) int {
 	ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer cancel()
 
@@ -72,7 +73,7 @@ func Main(version, commit, date, goVersion string) int {
 					fmt.Println("gpgsmith " + version)
 					fmt.Println("commit: " + commit)
 					fmt.Println("built: " + date)
-					fmt.Println("go: " + goVersion)
+					fmt.Println("go: " + runtime.Version())
 					return nil
 				},
 			},
