@@ -1,6 +1,7 @@
 package gpgsmith
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"testing"
@@ -163,6 +164,34 @@ func TestVaultRestoreHasArgsUsage(t *testing.T) {
 
 	if restore.ArgsUsage == "" {
 		t.Error("vault restore should have ArgsUsage for <ref>")
+	}
+}
+
+func TestSessionGuardOnAllVaultEntrypoints(t *testing.T) {
+	// All vault commands that open a session should refuse if already in one.
+	// vaultCreate, vaultImport, vaultOpen, and vaultRestore all check GPGSMITH_SESSION=1.
+	t.Setenv("GPGSMITH_SESSION", "1")
+
+	tests := []struct {
+		name   string
+		action func(context.Context, *cli.Command) error
+	}{
+		{"create", vaultCreate},
+		{"import", vaultImport},
+		{"open", vaultOpen},
+		{"restore", vaultRestore},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := tt.action(t.Context(), nil)
+			if err == nil {
+				t.Fatal("expected error when GPGSMITH_SESSION=1")
+			}
+			want := "already in a gpgsmith session, exit first"
+			if err.Error() != want {
+				t.Errorf("error = %q, want %q", err.Error(), want)
+			}
+		})
 	}
 }
 
