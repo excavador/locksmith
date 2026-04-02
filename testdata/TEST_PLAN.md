@@ -78,7 +78,13 @@
 |---|---|---|
 | `confirmPassphrases` | Covered | Match, mismatch, read errors |
 | `vaultCmd` flags | Covered | Checks --no-interactive on create/import/open/restore |
+| `vaultOpen` arg rejection | Covered | Verifies open has no ArgsUsage; restore has ArgsUsage |
+| `cardCmd` subcommands | Covered | All expected subcommands exist |
 | `cardCmd` discover | Covered | Subcommand exists with action |
+| `newSessionRC` (bash) | Covered | Creates temp rcfile with prompt + .bashrc source |
+| `newSessionRC` (zsh) | Covered | Creates ZDOTDIR with .zshrc prompt override |
+| `newSessionRC` (unknown) | Covered | Returns no-op for unknown shells |
+| `newSessionRC` cleanup | Covered | Temp files removed after cleanup |
 | `promptLineFrom` | Covered | Normal input, whitespace trim, empty, EOF |
 | `shellEscapeSingleQuote` | Covered | No quotes, single quotes, multiple quotes, empty |
 | `GPGSMITH_VAULT_KEY` env var | Covered | Set and unset |
