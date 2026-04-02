@@ -63,6 +63,9 @@ func (c *Client) Publish(ctx context.Context, masterFP string, targets []Publish
 // LookupKeyservers queries multiple keyservers to check if a key is published.
 // Each keyserver query has a 15-second timeout to avoid hanging on unresponsive servers.
 func (c *Client) LookupKeyservers(ctx context.Context, masterFP string, servers []string) []KeyserverLookupResult {
+	if err := ValidateFingerprint(masterFP); err != nil {
+		return []KeyserverLookupResult{{Err: fmt.Errorf("lookup: %w", err)}}
+	}
 	const lookupTimeout = 15 * time.Second
 
 	var results []KeyserverLookupResult
@@ -90,6 +93,10 @@ func (c *Client) LookupKeyservers(ctx context.Context, masterFP string, servers 
 
 // LookupGitHub checks if the GPG key is registered on GitHub via `gh gpg-key list`.
 func (c *Client) LookupGitHub(ctx context.Context, masterFP string) KeyserverLookupResult {
+	if err := ValidateFingerprint(masterFP); err != nil {
+		return KeyserverLookupResult{URL: "github", Err: fmt.Errorf("lookup github: %w", err)}
+	}
+
 	ghPath, err := exec.LookPath("gh")
 	if err != nil {
 		return KeyserverLookupResult{URL: "github", Err: fmt.Errorf("gh CLI not found")}
@@ -199,9 +206,16 @@ func (c *Client) deleteGitHubGPGKey(ctx context.Context, ghPath string, masterFP
 		return fmt.Errorf("list gpg keys: %w", err)
 	}
 
+	// Take only the first line (in case of multiple matches) and validate it's numeric.
 	ghKeyID := strings.TrimSpace(string(out))
 	if ghKeyID == "" {
 		return fmt.Errorf("GPG key %s not found on GitHub", keyID)
+	}
+	if idx := strings.IndexByte(ghKeyID, '\n'); idx >= 0 {
+		ghKeyID = ghKeyID[:idx]
+	}
+	if !serialRe.MatchString(ghKeyID) {
+		return fmt.Errorf("unexpected GitHub key ID format: %q", ghKeyID)
 	}
 
 	// Delete the key.

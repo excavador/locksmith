@@ -49,6 +49,11 @@ workflows, following the ssh-agent pattern.
 - **[direnv](https://direnv.net/docs/installation.html)** -- auto-loads the devbox environment on `cd`
 - **gpg** -- GnuPG 2.x must be installed and on `PATH`
 
+### Optional dependencies
+
+- **[ykman](https://developers.yubico.com/yubikey-manager/)** (yubikey-manager) -- enables specific YubiKey model detection (e.g., "YubiKey 5 NFC" instead of generic "Yubico YubiKey"). Install via `pip install yubikey-manager` or your package manager.
+- **[gh](https://cli.github.com/)** -- GitHub CLI, enables publishing GPG and SSH keys to GitHub via `keys publish --target github`.
+
 ## Installation
 
 ### From source (recommended during development)
@@ -146,6 +151,7 @@ gpgsmith
 │   ├── revoke <key-id>    revoke a specific subkey
 │   ├── publish            publish public key to configured targets (--target <name>)
 │   ├── ssh-pubkey         export auth subkey as SSH public key (~/.ssh/)
+│   ├── lookup             check which keyservers and GitHub have your public key
 │   ├── status             show key and card info
 │   └── config
 │       ├── show           show GPG config (inside GNUPGHOME)
@@ -321,6 +327,8 @@ subkey_expiry: 2y
 publish_targets:
   - type: keyserver
     url: hkps://keys.openpgp.org
+  - type: keyserver
+    url: hkps://keyserver.ubuntu.com
   - type: github
 ```
 
