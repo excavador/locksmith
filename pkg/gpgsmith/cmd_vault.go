@@ -93,11 +93,42 @@ func loadVault(ctx context.Context, cmd *cli.Command) (*vault.Vault, error) {
 }
 
 func vaultCreate(ctx context.Context, cmd *cli.Command) error {
-	v, err := loadVault(ctx, cmd)
+	logger := loggerFrom(ctx)
+
+	vaultDir := cmd.Root().String("vault-dir")
+
+	// If no --vault-dir, try loading from existing config.
+	if vaultDir == "" {
+		cfg, err := vault.LoadConfig("")
+		if err == nil {
+			vaultDir = cfg.VaultDir
+		}
+	}
+
+	// If still no vault dir, use a sensible default.
+	if vaultDir == "" {
+		home, err := os.UserHomeDir()
+		if err != nil {
+			return fmt.Errorf("determine home directory: %w", err)
+		}
+		vaultDir = filepath.Join(home, "Dropbox", "Private", "vault")
+		logger.InfoContext(ctx, "no vault dir specified, using default",
+			slog.String("dir", vaultDir),
+		)
+	}
+
+	cfg := &vault.Config{VaultDir: vaultDir}
+	v, err := vault.New(cfg, logger)
 	if err != nil {
 		return err
 	}
-	return v.Create(ctx)
+
+	if err := v.Create(ctx); err != nil {
+		return err
+	}
+
+	// Save config so future commands work without --vault-dir.
+	return vault.SaveConfig("", cfg)
 }
 
 func vaultImport(ctx context.Context, cmd *cli.Command) error {
