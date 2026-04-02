@@ -102,7 +102,18 @@ gpg --list-keys                     # raw gpg works too
 exit                                # prompts to seal or discard
 ```
 
-### 3. Provision a YubiKey
+### 3. Discover existing YubiKeys
+
+```bash
+gpgsmith vault open
+gpgsmith card discover              # detect connected YubiKey, prompt for label
+# Label: green
+# Description: on keychain
+# Added "green" (19750652) to inventory.
+exit
+```
+
+### 4. Provision a YubiKey
 
 ```bash
 gpgsmith vault open
@@ -110,7 +121,7 @@ gpgsmith card provision green       # generate + to-card + publish + ssh-pubkey
 exit                                # seal: "provisioned green YubiKey"
 ```
 
-### 4. Rotate subkeys
+### 5. Rotate subkeys
 
 ```bash
 gpgsmith vault open
@@ -118,7 +129,7 @@ gpgsmith card rotate green          # revoke old + generate new + to-card + publ
 exit                                # seal: "rotated subkeys 2026"
 ```
 
-### 5. Check inventory and audit log
+### 6. Check inventory and audit log
 
 ```bash
 gpgsmith vault open
