@@ -29,11 +29,5 @@ jobs:
       - name: Tidy & format check
         run: devbox run -- just tidy-check
 
-      - name: Lint
-        run: devbox run -- just lint
-
-      - name: Test
-        run: devbox run -- just test
-
-      - name: Build
-        run: devbox run -- just build
+      - name: All (deps + fmt + lint + test + build)
+        run: devbox run -- just all

@@ -17,7 +17,9 @@ deps:
     go mod tidy
     go mod verify
 
-check: deps fmt lint test build
+check: lint test
+
+all: deps fmt lint test build
 
 tidy-check:
     #!/usr/bin/env bash
