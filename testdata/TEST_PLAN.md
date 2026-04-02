@@ -133,6 +133,9 @@ Currently none are implemented -- they would require building the binary and run
 | FindByLabel serial vs label priority | gpg | Covered |
 | Invalid fingerprint/keyID/serial formats | gpg | Covered |
 | Shell quoting of passphrases | gpgsmith | Covered (`TestShellEscapeSingleQuote`) |
+| Session RC file creation + cleanup | gpgsmith | Covered (bash, zsh, unknown shells) |
+| vault open rejects positional args | gpgsmith | Covered (ArgsUsage check) |
+| Card discover duplicate detection | gpg + gpgsmith | Covered (FindByLabel serial priority) |
 
 ## 5. Mocking Requirements
 
