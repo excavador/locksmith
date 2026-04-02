@@ -10,6 +10,7 @@ import (
 	"text/tabwriter"
 
 	"github.com/urfave/cli/v3"
+	"golang.org/x/term"
 
 	"github.com/excavador/locksmith/pkg/vault"
 )
@@ -78,18 +79,49 @@ func vaultCmd() *cli.Command {
 func loadVault(ctx context.Context, cmd *cli.Command) (*vault.Vault, error) {
 	logger := loggerFrom(ctx)
 
+	var cfg *vault.Config
+
 	vaultDir := cmd.Root().String("vault-dir")
 	if vaultDir != "" {
-		cfg := &vault.Config{VaultDir: vaultDir}
+		cfg = &vault.Config{VaultDir: vaultDir}
+	} else {
+		var err error
+		cfg, err = vault.LoadConfig("")
+		if err != nil {
+			return nil, fmt.Errorf("load vault config: %w (use --vault-dir or create config)", err)
+		}
+	}
+
+	// If identity file is configured, use key-file mode.
+	if cfg.Identity != "" {
 		return vault.New(cfg, logger)
 	}
 
-	cfg, err := vault.LoadConfig("")
+	// Otherwise, prompt for passphrase.
+	passphrase, err := readPassphrase("Vault passphrase: ")
 	if err != nil {
-		return nil, fmt.Errorf("load vault config: %w (use --vault-dir or create config)", err)
+		return nil, err
 	}
 
-	return vault.New(cfg, logger)
+	return vault.NewWithPassphrase(cfg, passphrase, logger)
+}
+
+func readPassphrase(prompt string) (string, error) {
+	fmt.Fprint(os.Stderr, prompt)
+
+	fd := os.Stdin.Fd()
+	pass, err := term.ReadPassword(int(fd)) //nolint:gosec // fd is always stdin
+	fmt.Fprintln(os.Stderr)
+
+	if err != nil {
+		return "", fmt.Errorf("read passphrase: %w", err)
+	}
+
+	if len(pass) == 0 {
+		return "", fmt.Errorf("passphrase cannot be empty")
+	}
+
+	return string(pass), nil
 }
 
 func vaultCreate(ctx context.Context, cmd *cli.Command) error {
