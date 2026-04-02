@@ -1,7 +1,10 @@
 package vault
 
 import (
+	"archive/tar"
+	"bytes"
 	"context"
+	"io"
 	"log/slog"
 	"os"
 	"path/filepath"
@@ -347,9 +350,9 @@ func TestExpandHome(t *testing.T) {
 }
 
 func TestSecureTmpDir(t *testing.T) {
-	dir, err := secureTmpDir()
+	dir, err := SecureTmpDir()
 	if err != nil {
-		t.Fatalf("secureTmpDir() error: %v", err)
+		t.Fatalf("SecureTmpDir() error: %v", err)
 	}
 	defer os.RemoveAll(dir)
 
@@ -443,6 +446,94 @@ func TestValidateWorkdir(t *testing.T) {
 	}
 }
 
+func TestShouldSkipFile(t *testing.T) {
+	tests := []struct {
+		name string
+		skip bool
+	}{
+		{".#lk0x00007f1234567890.hostname.12345", true},
+		{".#lk0x1234", true},
+		{"random_seed", true},
+		{".gpg-connect-history", true},
+		{"S.gpg-agent", true},
+		{"S.gpg-agent.browser", true},
+		{"S.gpg-agent.ssh", true},
+		{"pubring.kbx", false},
+		{"trustdb.gpg", false},
+		{"private-keys-v1.d", false},
+		{"gpg.conf", false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := shouldSkipFile(tt.name)
+			if got != tt.skip {
+				t.Errorf("shouldSkipFile(%q) = %v, want %v", tt.name, got, tt.skip)
+			}
+		})
+	}
+}
+
+func TestTarDirSkipsRuntimeFiles(t *testing.T) {
+	sourceDir := t.TempDir()
+
+	// Create legitimate files.
+	if err := os.WriteFile(filepath.Join(sourceDir, "pubring.kbx"), []byte("keyring"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(sourceDir, "trustdb.gpg"), []byte("trust"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	// Create runtime files that should be skipped.
+	skipFiles := []string{
+		".#lk0x00007f1234567890.hostname.12345",
+		"random_seed",
+		".gpg-connect-history",
+		"S.gpg-agent",
+		"S.gpg-agent.browser",
+		"S.gpg-agent.ssh",
+	}
+	for _, name := range skipFiles {
+		if err := os.WriteFile(filepath.Join(sourceDir, name), []byte("skip"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	// Tar the directory.
+	var buf bytes.Buffer
+	if err := tarDir(sourceDir, &buf); err != nil {
+		t.Fatalf("tarDir() error: %v", err)
+	}
+
+	// Read back and check which files are in the archive.
+	tr := tar.NewReader(&buf)
+	found := make(map[string]bool)
+	for {
+		header, err := tr.Next()
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			t.Fatalf("read tar: %v", err)
+		}
+		found[header.Name] = true
+	}
+
+	// Legitimate files should be present.
+	for _, name := range []string{"pubring.kbx", "trustdb.gpg"} {
+		if !found[name] {
+			t.Errorf("expected %q in archive", name)
+		}
+	}
+
+	// Runtime files should be absent.
+	for _, name := range skipFiles {
+		if found[name] {
+			t.Errorf("runtime file %q should not be in archive", name)
+		}
+	}
+}
+
 func TestSealRejectsInvalidWorkdir(t *testing.T) {
 	ctx := context.Background()
 	vaultDir := t.TempDir()
@@ -457,6 +548,116 @@ func TestSealRejectsInvalidWorkdir(t *testing.T) {
 	_, err = v.Seal(ctx, "/tmp/not-a-locksmith-dir", "test")
 	if err == nil {
 		t.Fatal("Seal() should reject non-locksmith workdir")
+	}
+}
+
+func TestVaultWrongPassphraseRejected(t *testing.T) {
+	ctx := context.Background()
+	vaultDir := t.TempDir()
+	sourceDir := t.TempDir()
+	logger := testLogger()
+
+	if err := os.WriteFile(filepath.Join(sourceDir, "secret.txt"), []byte("top secret"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	// Create vault and import with passphrase A.
+	cfg := &Config{VaultDir: vaultDir}
+	v, err := NewWithPassphrase(cfg, "correct-passphrase", logger)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := v.Import(ctx, sourceDir); err != nil {
+		t.Fatalf("Import() error: %v", err)
+	}
+
+	// Try to open with passphrase B -- should fail.
+	v2, err := NewWithPassphrase(cfg, "wrong-passphrase", logger)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, _, err = v2.Open(ctx)
+	if err == nil {
+		t.Fatal("Open() with wrong passphrase should fail")
+	}
+}
+
+func TestVaultMultipleSealCycles(t *testing.T) {
+	ctx := context.Background()
+	vaultDir := t.TempDir()
+	sourceDir := t.TempDir()
+	logger := testLogger()
+
+	if err := os.WriteFile(filepath.Join(sourceDir, "v1.txt"), []byte("version 1"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	cfg := &Config{VaultDir: vaultDir}
+	v, err := NewWithPassphrase(cfg, "test-pass", logger)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Import as first snapshot.
+	_, err = v.Import(ctx, sourceDir)
+	if err != nil {
+		t.Fatalf("Import() error: %v", err)
+	}
+
+	// Open, modify, seal.
+	workdir, _, err := v.Open(ctx)
+	if err != nil {
+		t.Fatalf("Open() error: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(workdir, "v2.txt"), []byte("version 2"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	_, err = v.Seal(ctx, workdir, "second version")
+	if err != nil {
+		t.Fatalf("Seal() error: %v", err)
+	}
+
+	// Open again (should get latest), modify, seal.
+	workdir2, _, err := v.Open(ctx)
+	if err != nil {
+		t.Fatalf("second Open() error: %v", err)
+	}
+	// Verify v2.txt is present from previous seal.
+	data, err := os.ReadFile(filepath.Join(workdir2, "v2.txt"))
+	if err != nil {
+		t.Fatalf("v2.txt missing after second open: %v", err)
+	}
+	if string(data) != "version 2" {
+		t.Errorf("v2.txt = %q, want %q", string(data), "version 2")
+	}
+	if err := os.WriteFile(filepath.Join(workdir2, "v3.txt"), []byte("version 3"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	_, err = v.Seal(ctx, workdir2, "third version")
+	if err != nil {
+		t.Fatalf("second Seal() error: %v", err)
+	}
+
+	// Should have 3 snapshots total.
+	snapshots, err := v.List(ctx)
+	if err != nil {
+		t.Fatalf("List() error: %v", err)
+	}
+	if len(snapshots) != 3 {
+		t.Errorf("expected 3 snapshots, got %d", len(snapshots))
+	}
+
+	// Restore first snapshot -- should only have v1.txt.
+	first, err := v.Restore(ctx, filepath.Base(snapshots[0].Path))
+	if err != nil {
+		t.Fatalf("Restore() error: %v", err)
+	}
+	defer os.RemoveAll(first)
+	if _, err := os.Stat(filepath.Join(first, "v1.txt")); err != nil {
+		t.Error("v1.txt should exist in first snapshot")
+	}
+	if _, err := os.Stat(filepath.Join(first, "v2.txt")); !os.IsNotExist(err) {
+		t.Error("v2.txt should NOT exist in first snapshot")
 	}
 }
 

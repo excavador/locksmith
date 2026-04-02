@@ -7,8 +7,8 @@ import (
 	"os"
 )
 
-// secureTmpDir creates a temporary directory using os.TempDir() on non-Linux systems.
-func secureTmpDir() (string, error) {
+// SecureTmpDir creates a temporary directory using os.TempDir() on non-Linux systems.
+func SecureTmpDir() (string, error) {
 	dir, err := os.MkdirTemp("", "locksmith-*")
 	if err != nil {
 		return "", fmt.Errorf("create tmpdir: %w", err)

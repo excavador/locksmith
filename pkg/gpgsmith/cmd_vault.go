@@ -21,15 +21,27 @@ func vaultCmd() *cli.Command {
 		Usage: "manage encrypted vault",
 		Commands: []*cli.Command{
 			{
-				Name:   "create",
-				Usage:  "create a new vault",
+				Name:  "create",
+				Usage: "create a new vault",
+				Flags: []cli.Flag{
+					&cli.BoolFlag{
+						Name:  "no-interactive",
+						Usage: "output env exports instead of spawning a shell",
+					},
+				},
 				Action: vaultCreate,
 			},
 			{
 				Name:      "import",
 				Usage:     "import existing GNUPGHOME as first snapshot",
 				ArgsUsage: "<path>",
-				Action:    vaultImport,
+				Flags: []cli.Flag{
+					&cli.BoolFlag{
+						Name:  "no-interactive",
+						Usage: "output env exports instead of spawning a shell",
+					},
+				},
+				Action: vaultImport,
 			},
 			{
 				Name:  "open",
@@ -77,6 +89,14 @@ func vaultCmd() *cli.Command {
 }
 
 func loadVault(ctx context.Context, cmd *cli.Command) (*vault.Vault, error) {
+	return loadVaultWithOpts(ctx, cmd, false)
+}
+
+func loadVaultFirstUse(ctx context.Context, cmd *cli.Command) (*vault.Vault, error) {
+	return loadVaultWithOpts(ctx, cmd, true)
+}
+
+func loadVaultWithOpts(ctx context.Context, cmd *cli.Command, confirmPassphrase bool) (*vault.Vault, error) {
 	logger := loggerFrom(ctx)
 
 	var cfg *vault.Config
@@ -97,10 +117,18 @@ func loadVault(ctx context.Context, cmd *cli.Command) (*vault.Vault, error) {
 		return vault.New(cfg, logger)
 	}
 
-	// Otherwise, prompt for passphrase.
-	passphrase, err := readPassphrase("Vault passphrase: ")
-	if err != nil {
-		return nil, err
+	// Check GPGSMITH_VAULT_KEY env var before prompting.
+	passphrase := os.Getenv("GPGSMITH_VAULT_KEY")
+	if passphrase == "" {
+		var err error
+		if confirmPassphrase {
+			passphrase, err = readPassphraseWithConfirm()
+		} else {
+			passphrase, err = readPassphrase("Vault passphrase: ")
+		}
+		if err != nil {
+			return nil, err
+		}
 	}
 
 	return vault.NewWithPassphrase(cfg, passphrase, logger)
@@ -122,6 +150,28 @@ func readPassphrase(prompt string) (string, error) {
 	}
 
 	return string(pass), nil
+}
+
+func readPassphraseWithConfirm() (string, error) {
+	return confirmPassphrases(readPassphrase)
+}
+
+func confirmPassphrases(readFn func(string) (string, error)) (string, error) {
+	pass, err := readFn("Vault passphrase: ")
+	if err != nil {
+		return "", err
+	}
+
+	confirm, err := readFn("Confirm passphrase: ")
+	if err != nil {
+		return "", err
+	}
+
+	if pass != confirm {
+		return "", fmt.Errorf("passphrases do not match")
+	}
+
+	return pass, nil
 }
 
 func vaultCreate(ctx context.Context, cmd *cli.Command) error {
@@ -160,7 +210,17 @@ func vaultCreate(ctx context.Context, cmd *cli.Command) error {
 	}
 
 	// Save config so future commands work without --vault-dir.
-	return vault.SaveConfig("", cfg)
+	if err := vault.SaveConfig("", cfg); err != nil {
+		return err
+	}
+
+	// Open a session on the new empty vault.
+	workdir, err := vault.SecureTmpDir()
+	if err != nil {
+		return fmt.Errorf("create session dir: %w", err)
+	}
+
+	return startSession(ctx, v, workdir, cmd, logger)
 }
 
 func vaultImport(ctx context.Context, cmd *cli.Command) error {
@@ -169,7 +229,7 @@ func vaultImport(ctx context.Context, cmd *cli.Command) error {
 		return fmt.Errorf("import requires a source path")
 	}
 
-	v, err := loadVault(ctx, cmd)
+	v, err := loadVaultFirstUse(ctx, cmd)
 	if err != nil {
 		return err
 	}
@@ -179,8 +239,18 @@ func vaultImport(ctx context.Context, cmd *cli.Command) error {
 		return err
 	}
 
-	fmt.Println(filepath.Base(snap.Path))
-	return nil
+	logger := loggerFrom(ctx)
+	logger.InfoContext(ctx, "imported snapshot",
+		slog.String("snapshot", filepath.Base(snap.Path)),
+	)
+
+	// Open the just-imported snapshot and start a session.
+	workdir, _, err := v.Open(ctx)
+	if err != nil {
+		return fmt.Errorf("open after import: %w", err)
+	}
+
+	return startSession(ctx, v, workdir, cmd, logger)
 }
 
 func vaultOpen(ctx context.Context, cmd *cli.Command) error {
@@ -199,6 +269,10 @@ func vaultOpen(ctx context.Context, cmd *cli.Command) error {
 		slog.String("snapshot", filepath.Base(snap.Path)),
 	)
 
+	return startSession(ctx, v, workdir, cmd, logger)
+}
+
+func startSession(ctx context.Context, v *vault.Vault, workdir string, cmd *cli.Command, logger *slog.Logger) error {
 	noInteractive := cmd.Bool("no-interactive")
 	isTTY := isTerminal()
 
@@ -208,6 +282,9 @@ func vaultOpen(ctx context.Context, cmd *cli.Command) error {
 
 	// Scripted mode: output env exports.
 	fmt.Printf("export GNUPGHOME=%s;\n", workdir)
+	if pass := v.Passphrase(); pass != "" {
+		fmt.Printf("export GPGSMITH_VAULT_KEY=%s;\n", pass)
+	}
 	return nil
 }
 
@@ -283,6 +360,7 @@ func vaultSeal(ctx context.Context, cmd *cli.Command) error {
 
 	// Scripted mode: output unset + snapshot name.
 	fmt.Printf("unset GNUPGHOME;\n")
+	fmt.Printf("unset GPGSMITH_VAULT_KEY;\n")
 	fmt.Fprintln(os.Stderr, "Sealed:", filepath.Base(snap.Path))
 	return nil
 }
@@ -303,6 +381,7 @@ func vaultDiscard(ctx context.Context, cmd *cli.Command) error {
 	}
 
 	fmt.Printf("unset GNUPGHOME;\n")
+	fmt.Printf("unset GPGSMITH_VAULT_KEY;\n")
 	return nil
 }
 

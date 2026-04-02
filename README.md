@@ -2,47 +2,365 @@
 
 GPG key lifecycle manager with encrypted vault storage and YubiKey support.
 
-Automates the routine of generating, rotating, provisioning, and revoking GPG
-subkeys across multiple YubiKeys — with append-only encrypted snapshots for
-history and recovery.
+**gpgsmith** automates the routine of generating, rotating, provisioning, and
+revoking GPG subkeys across multiple YubiKeys. Keys live in append-only
+encrypted snapshots so every change is recoverable, and the whole vault syncs
+via any file-sync service (Dropbox, Syncthing, etc.) with no special tooling.
+
+## The Problem
+
+Managing GPG keys with YubiKeys is a manual, error-prone process:
+
+- Decrypt a LUKS volume (requires root, specific OS, specific hardware)
+- Set `GNUPGHOME`, run a dozen `gpg` commands in the right order
+- Remember which subkeys are on which YubiKey
+- Re-encrypt, hope you didn't forget a step
+- No audit trail, no inventory, no easy recovery
+
+gpgsmith replaces this with a single tool that handles encryption, key
+operations, YubiKey provisioning, publishing, and record-keeping automatically.
+
+## Use Cases
+
+**First-time setup (existing keys)** -- migrate keys from a LUKS vault or
+`~/.gnupg` into gpgsmith's encrypted vault.
+
+**First-time setup (new keys)** -- `gpgsmith setup` wizard creates a vault,
+generates keys, and provisions a YubiKey in one step.
+
+**Routine subkey rotation** -- revoke expiring subkeys, generate new ones,
+provision to YubiKey, publish, and export SSH key with `card rotate`.
+
+**Provision a second YubiKey** -- restore a pre-card snapshot and provision a
+spare YubiKey with the same or unique subkeys.
+
+**Lost YubiKey** -- revoke all subkeys associated with a card and publish
+revocations with `card revoke`.
+
+**New workstation** -- open the vault (synced via Dropbox), export SSH public
+key, done.
+
+**Scripted automation** -- `eval $(gpgsmith vault open)` for CI or cron-style
+workflows, following the ssh-agent pattern.
 
 ## Prerequisites
 
-- [devbox](https://www.jetify.com/devbox/docs/installing_devbox/) — portable dev environment
-- [direnv](https://direnv.net/docs/installation.html) — auto-load environment on `cd`
+- **[devbox](https://www.jetify.com/devbox/docs/installing_devbox/)** -- portable dev environment (provides Go, golangci-lint, just, goreleaser)
+- **[direnv](https://direnv.net/docs/installation.html)** -- auto-loads the devbox environment on `cd`
+- **gpg** -- GnuPG 2.x must be installed and on `PATH`
 
-## Getting Started
+## Installation
+
+### From source (recommended during development)
 
 ```bash
 cd locksmith
 direnv allow
-just build
+just build          # builds bin/gpgsmith
 ```
 
-## Usage
+### Go install
 
 ```bash
-# Create a new vault
+go install github.com/excavador/locksmith/cmd/gpgsmith@latest
+```
+
+### GitHub releases
+
+Pre-built binaries for Linux and macOS (amd64/arm64) are published on
+[GitHub Releases](https://github.com/excavador/locksmith/releases) via
+goreleaser on every tagged version.
+
+## Quick Start
+
+### 1. Create a vault and import existing keys
+
+```bash
+# Create a new vault (prompts for passphrase, opens a session)
 gpgsmith vault create
 
-# Import existing GPG keys
+# Or import an existing GNUPGHOME
+gpgsmith vault create
 gpgsmith vault import ~/.gnupg
+```
 
-# Open vault (interactive session)
+### 2. Open the vault
+
+```bash
+# Interactive: spawns a subshell with GNUPGHOME set
 gpgsmith vault open
 
-# Inside the session:
-gpgsmith keys generate
-gpgsmith keys to-card
-gpgsmith keys publish
+# Inside the gpgsmith shell:
+gpgsmith keys list
+gpgsmith card provision green --description "on keychain"
+gpg --list-keys                     # raw gpg works too
+exit                                # prompts to seal or discard
+```
 
-# Exit saves automatically (or discard with gpgsmith vault close)
+### 3. Provision a YubiKey
+
+```bash
+gpgsmith vault open
+gpgsmith card provision green       # generate + to-card + publish + ssh-pubkey
+exit                                # seal: "provisioned green YubiKey"
+```
+
+### 4. Rotate subkeys
+
+```bash
+gpgsmith vault open
+gpgsmith card rotate green          # revoke old + generate new + to-card + publish + ssh
+exit                                # seal: "rotated subkeys 2026"
+```
+
+### 5. Check inventory and audit log
+
+```bash
+gpgsmith vault open
+gpgsmith card inventory             # which cards, which keys
+gpgsmith audit show --last 10       # recent operations
+gpgsmith vault discard              # read-only, nothing to seal
+```
+
+## CLI Reference
+
+```
+gpgsmith
+├── setup                  first-time wizard: vault create + keys create + card provision
+├── vault                  manage encrypted vault
+│   ├── create             create a new vault
+│   ├── import <path>      import existing GNUPGHOME as first snapshot
+│   ├── open               decrypt latest snapshot and start session
+│   ├── seal <message>     save current session as new snapshot
+│   ├── discard            discard session without saving
+│   ├── list               list all snapshots
+│   ├── restore <ref>      decrypt a specific snapshot
+│   └── config
+│       ├── show           show vault config
+│       └── set <k> <v>    set a vault config value
+├── keys                   GPG key operations (requires GNUPGHOME set via vault open)
+│   ├── create             generate new master key and subkeys
+│   ├── generate           add new S/E/A subkeys
+│   ├── to-card            move subkeys to YubiKey (--same-keys / --unique-keys)
+│   ├── list               list keys and subkeys
+│   ├── revoke <key-id>    revoke a specific subkey
+│   ├── publish            publish public key to configured targets (--target <name>)
+│   ├── ssh-pubkey         export auth subkey as SSH public key (~/.ssh/)
+│   ├── status             show key and card info
+│   └── config
+│       ├── show           show GPG config (inside GNUPGHOME)
+│       └── set <k> <v>    set a GPG config value
+├── card                   high-level YubiKey workflows (requires GNUPGHOME set via vault open)
+│   ├── provision <label>  generate subkeys + to-card + publish + ssh-pubkey
+│   ├── rotate <label>     revoke old + generate new + to-card + publish + ssh
+│   ├── revoke <label>     revoke all subkeys for a card + publish revocation
+│   ├── inventory          list all known YubiKeys
+│   └── discover           detect connected YubiKey and add to inventory
+├── audit
+│   └── show               display audit entries (--last N)
+└── version                show version information
+```
+
+`<label>` accepts a card label (e.g., "green") or serial number.
+
+`keys` commands are low-level building blocks. `card` commands are high-level
+workflows that compose `keys` operations internally.
+
+All `keys` and `card` commands require `GNUPGHOME` to be set (via `vault open`).
+
+### Global flags
+
+| Flag | Default | Description |
+|------|---------|-------------|
+| `--vault-dir` | from config | Override vault directory |
+| `--verbose` | `false` | Debug logging to stderr |
+| `--dry-run` | `false` | Print commands without executing |
+
+## Architecture
+
+locksmith is structured as two independent layers:
+
+### Layer 1: Vault (age + tar)
+
+Manages encrypted, append-only snapshots. Shared and reusable -- future tools
+like `pkismith` (PKI CA management) will use the same vault layer.
+
+- Each snapshot is a self-contained `.tar.age` file (encrypted tarball)
+- Append-only: new snapshot per operation, old ones never modified
+- Encryption via [filippo.io/age](https://filippo.io/age) -- passphrase-based
+  (scrypt) or key file
+- Filename format: `<ISO8601>_<slugified-message>.tar.age`
+
+### Layer 2: GPG + YubiKey
+
+Operates on a `GNUPGHOME` directory. Shells out to the `gpg` binary with
+`--homedir`. Stateless -- takes a directory, performs operations, done. Doesn't
+know or care about encryption or storage.
+
+### Workflow
+
+```
+vault open  ->  find latest .tar.age -> decrypt -> untar -> tmpdir
+                   |
+                GNUPGHOME = tmpdir (via subshell or env export)
+                   |
+                perform GPG operations (generate / revoke / to-card / ...)
+                   |
+vault seal  ->  tar tmpdir -> encrypt -> write new .tar.age -> cleanup
+```
+
+### Vault directory structure
+
+```
+~/Dropbox/Private/vault/
+├── 2026-01-01T000000Z_initial-import.tar.age
+├── 2026-03-15T103000Z_rotate-subkeys.tar.age
+├── 2026-04-01T153000Z_new-yubikey-2.tar.age
+└── ...
+```
+
+### GNUPGHOME contents (inside each tarball)
+
+```
+GNUPGHOME/
+├── pubring.kbx
+├── trustdb.gpg
+├── gpg.conf
+├── private-keys-v1.d/
+├── gpgsmith.yaml              # GPG config (master_fp, algo, expiry, publish targets)
+├── gpgsmith-inventory.yaml    # YubiKey inventory
+└── gpgsmith-audit.yaml        # audit log
+```
+
+## Encryption
+
+gpgsmith uses [age](https://age-encryption.org/) for vault encryption, not GPG.
+This avoids a circular dependency (needing GPG keys to decrypt GPG keys).
+
+Two modes:
+
+- **Passphrase** (default): prompted from terminal, scrypt-derived key. No key
+  file to manage.
+- **Key file**: set `identity` in vault config to an age key file path. Useful
+  for scripted/automated workflows.
+
+### Secure temporary directory
+
+On Linux, decrypted vaults are stored in `/dev/shm` (RAM-backed tmpfs), so
+private keys never touch disk. On macOS, `os.TempDir()` is used (per-user
+`/var/folders/...`). Permissions are set to `0700`. Signal handlers clean up on
+interrupt.
+
+## Interactive vs Scripted Mode
+
+gpgsmith follows the **ssh-agent pattern** for session management.
+
+### Interactive mode (default when TTY detected)
+
+`vault open` spawns `$SHELL` with `GNUPGHOME` set. On shell exit, prompts to
+seal or discard:
+
+```bash
+$ gpgsmith vault open
+Entering gpgsmith shell. GNUPGHOME is set.
+Run gpgsmith commands or raw gpg. Type 'exit' when done.
+
+gpgsmith$ gpgsmith card rotate green
+gpgsmith$ exit
+Seal vault? [Y/n/message]: rotated subkeys
+Sealed: 2026-04-01T153000Z_rotated-subkeys.tar.age
+```
+
+### Scripted mode (non-TTY or `--no-interactive`)
+
+Like `ssh-agent` -- outputs shell exports to stdout:
+
+```bash
+eval $(gpgsmith vault open)              # export GNUPGHOME=/dev/shm/gpgsmith-abc123;
+gpgsmith card rotate green               # uses GNUPGHOME from env
+eval $(gpgsmith vault seal "rotated")    # unset GNUPGHOME;
+```
+
+### TTY detection
+
+| Condition | Behavior |
+|-----------|----------|
+| TTY, no flag | Interactive (subshell) |
+| TTY + `--no-interactive` | Scripted (env export) |
+| No TTY | Scripted (env export) |
+
+## Configuration
+
+### Vault config: `~/.config/locksmith/config.yaml`
+
+Machine-local, always available. Needed before decryption.
+
+```yaml
+vault_dir: ~/Dropbox/Private/vault
+identity: ~/.config/locksmith/age-key.txt   # optional; prompts passphrase if absent
+gpg_binary: gpg
+```
+
+### GPG config: `GNUPGHOME/gpgsmith.yaml`
+
+Lives inside the encrypted tarball, travels with the keys. Available after
+`vault open`.
+
+```yaml
+master_fp: 6E1FD854CD2D225DDAED8EB7822B3952F976544E
+subkey_algo: rsa4096
+subkey_expiry: 2y
+publish_targets:
+  - type: keyserver
+    url: hkps://keys.openpgp.org
+  - type: github
+```
+
+### Resolution order (lowest to highest priority)
+
+1. Hardcoded defaults
+2. Config files (vault config + GPG config after open)
+3. CLI flags
+
+No environment variables for configuration. `GNUPGHOME` is the only env var,
+used as session state.
+
+## Project Structure
+
+```
+locksmith/
+├── cmd/gpgsmith/          binary entrypoint (ldflags for version info)
+├── pkg/
+│   ├── vault/             encrypted snapshot storage (age + tar), shared
+│   ├── audit/             audit logging, shared
+│   ├── gpg/               GPG operations, inventory, card management
+│   └── gpgsmith/          CLI wiring (urfave/cli/v3)
+├── testdata/              fixtures for GPG output parsing
+├── Justfile               build/test/lint commands
+├── devbox.json            dev environment (Go, golangci-lint, just, goreleaser)
+└── .goreleaser.yaml       release configuration
 ```
 
 ## Development
 
 ```bash
+just build    # build binary to bin/gpgsmith
+just test     # run all tests
+just lint     # run golangci-lint
 just check    # lint + test
-just build    # build binary
 just fmt      # format code
 ```
+
+## Contributing
+
+1. Fork the repository
+2. Create a feature branch
+3. Ensure `just check` passes (lint + tests)
+4. Open a pull request
+
+The project uses strict golangci-lint configuration. CI runs lint and tests on
+every push and pull request.
+
+## License
+
+[MIT](LICENSE) -- Copyright (c) 2026 Oleg Tsarev

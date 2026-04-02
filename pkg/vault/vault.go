@@ -88,6 +88,11 @@ func NewWithPassphrase(cfg *Config, passphrase string, logger *slog.Logger) (*Va
 	}, nil
 }
 
+// Passphrase returns the passphrase used for encryption, or empty if key-file mode.
+func (v *Vault) Passphrase() string {
+	return v.passphrase
+}
+
 // Create creates the vault directory if it does not already exist.
 func (v *Vault) Create(ctx context.Context) error {
 	if err := os.MkdirAll(v.dir, 0o700); err != nil {
@@ -324,7 +329,7 @@ func (v *Vault) decryptSnapshot(path string) (string, error) {
 		return "", fmt.Errorf("age decrypt: %w", err)
 	}
 
-	workdir, err := secureTmpDir()
+	workdir, err := SecureTmpDir()
 	if err != nil {
 		return "", fmt.Errorf("create tmpdir: %w", err)
 	}
@@ -377,6 +382,23 @@ func loadIdentityFromFile(path string) (age.Identity, error) {
 	return identities[0], nil
 }
 
+// shouldSkipFile returns true if the file should be excluded from tar archives.
+// These are GPG runtime files that shouldn't be in snapshots.
+func shouldSkipFile(name string) bool {
+	switch {
+	case strings.HasPrefix(name, ".#lk"):
+		return true
+	case name == "random_seed":
+		return true
+	case name == ".gpg-connect-history":
+		return true
+	case strings.HasPrefix(name, "S.gpg-agent"):
+		return true
+	default:
+		return false
+	}
+}
+
 // tarDir writes the contents of dir as a tar archive to w.
 // File paths inside the archive are relative to dir.
 func tarDir(dir string, w io.Writer) error {
@@ -392,6 +414,13 @@ func tarDir(dir string, w io.Writer) error {
 			return fmt.Errorf("relative path: %w", err)
 		}
 		if rel == "." {
+			return nil
+		}
+
+		if shouldSkipFile(filepath.Base(path)) {
+			if info.IsDir() {
+				return filepath.SkipDir
+			}
 			return nil
 		}
 

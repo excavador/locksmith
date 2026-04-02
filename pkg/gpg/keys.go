@@ -22,9 +22,10 @@ type (
 
 	// CardInfo holds information from gpg --card-status.
 	CardInfo struct {
-		Serial string
-		Model  string
-		KeyIDs []string // key grip or key IDs on the card
+		Serial     string
+		Model      string
+		ReaderName string   // raw Reader field from card-status
+		KeyIDs     []string // key grip or key IDs on the card
 	}
 )
 
@@ -99,7 +100,7 @@ func parseColonsOutput(output string) ([]SubKey, error) {
 			k := SubKey{
 				KeyID:     fields[4],
 				Algorithm: algoName(fields[3]),
-				Usage:     fields[11],
+				Usage:     parseUsage(recType, fields[11]),
 			}
 			if fields[5] != "" {
 				k.Created = parseEpoch(fields[5])
@@ -135,7 +136,7 @@ func parseCardStatus(output string) (*CardInfo, error) {
 
 		switch {
 		case fields[0] == "Reader" && len(fields) > 1:
-			// Reader field sometimes has model info
+			info.ReaderName = fields[1]
 		case fields[0] == "serial" && len(fields) > 1:
 			info.Serial = fields[1]
 		case fields[0] == "cardtype" && len(fields) > 1:
@@ -150,11 +151,54 @@ func parseCardStatus(output string) (*CardInfo, error) {
 		}
 	}
 
+	// Fall back to extracting model from the Reader name if cardtype is not set.
+	if info.Model == "" && info.ReaderName != "" {
+		info.Model = extractModelFromReader(info.ReaderName)
+	}
+
 	if info.Serial == "" {
 		return nil, fmt.Errorf("card status: no card detected or no serial found")
 	}
 
 	return info, nil
+}
+
+// parseUsage extracts the relevant usage letters from the capabilities field.
+// For primary keys (pub/sec), we extract only the lowercase letters which represent
+// the key's own capabilities. For subkeys (sub/ssb), we use the full field as-is
+// since it only contains the subkey's own capabilities.
+func parseUsage(recType, caps string) string {
+	switch recType {
+	case "pub", "sec":
+		// Primary keys: extract lowercase letters only (key's own capabilities).
+		var b strings.Builder
+		for _, r := range caps {
+			if r >= 'a' && r <= 'z' {
+				b.WriteRune(r)
+			}
+		}
+		return strings.ToUpper(b.String())
+	default:
+		return caps
+	}
+}
+
+// extractModelFromReader extracts a card model name from the Reader field.
+// Reader lines look like "Yubico YubiKey OTP FIDO CCID 00 00".
+// We strip trailing interface descriptors (OTP, FIDO, CCID) and slot numbers.
+func extractModelFromReader(reader string) string {
+	reader = strings.TrimSpace(reader)
+
+	// Remove trailing slot numbers like "00 00".
+	reader = strings.TrimRight(reader, "0123456789 ")
+
+	// Remove known interface descriptors.
+	for _, suffix := range []string{"CCID", "FIDO", "OTP", "U2F"} {
+		reader = strings.TrimSuffix(reader, suffix)
+		reader = strings.TrimRight(reader, " ")
+	}
+
+	return strings.TrimSpace(reader)
 }
 
 // parseEpoch converts a Unix epoch string to time.Time.

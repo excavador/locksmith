@@ -7,9 +7,9 @@ import (
 	"os"
 )
 
-// secureTmpDir creates a temporary directory in /dev/shm (RAM-backed) on Linux.
+// SecureTmpDir creates a temporary directory in /dev/shm (RAM-backed) on Linux.
 // Falls back to os.TempDir() if /dev/shm is not available.
-func secureTmpDir() (string, error) {
+func SecureTmpDir() (string, error) {
 	const shmDir = "/dev/shm"
 
 	if info, err := os.Stat(shmDir); err == nil && info.IsDir() {

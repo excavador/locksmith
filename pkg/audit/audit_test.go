@@ -1,6 +1,7 @@
 package audit
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"testing"
@@ -127,6 +128,53 @@ func TestAppendNoMetadata(t *testing.T) {
 	}
 	if entries[0].Metadata != nil {
 		t.Errorf("expected nil metadata, got %v", entries[0].Metadata)
+	}
+}
+
+func TestSequentialAppendPreservesAll(t *testing.T) {
+	// Append is designed for single-threaded CLI use (one user inside an
+	// encrypted vault session). This test verifies that sequential appends
+	// preserve all entries and maintain a valid YAML file.
+	dir := t.TempDir()
+
+	const n = 20
+	for i := range n {
+		entry := Entry{
+			Action:  fmt.Sprintf("action-%d", i),
+			Details: fmt.Sprintf("sequential entry %d", i),
+		}
+		if err := Append(dir, entry); err != nil {
+			t.Fatalf("Append(%d) error: %v", i, err)
+		}
+	}
+
+	entries, err := Load(dir)
+	if err != nil {
+		t.Fatalf("Load() error: %v", err)
+	}
+	if len(entries) != n {
+		t.Errorf("expected %d entries, got %d", n, len(entries))
+	}
+
+	// Verify ordering is preserved.
+	for i, e := range entries {
+		want := fmt.Sprintf("action-%d", i)
+		if e.Action != want {
+			t.Errorf("entry %d action = %q, want %q", i, e.Action, want)
+		}
+	}
+}
+
+func TestLoadCorruptedYAML(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "gpgsmith-audit.yaml")
+	if err := os.WriteFile(path, []byte("not: [valid: yaml: {{{"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	_, err := Load(dir)
+	if err == nil {
+		t.Fatal("Load() should fail with corrupted YAML")
 	}
 }
 

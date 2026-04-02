@@ -333,5 +333,33 @@ func cardDiscover(ctx context.Context, _ *cli.Command) error {
 		fmt.Printf("  %s (%s)\n", entry.Subkeys[i].KeyID, entry.Subkeys[i].Usage)
 	}
 
+	// Prompt for label and description.
+	label, err := promptLine("Label: ")
+	if err != nil {
+		return fmt.Errorf("read label: %w", err)
+	}
+	if label == "" {
+		return fmt.Errorf("label is required")
+	}
+	entry.Label = label
+
+	desc, err := promptLine("Description (optional): ")
+	if err != nil {
+		return fmt.Errorf("read description: %w", err)
+	}
+	entry.Description = desc
+
+	// Save to inventory.
+	inv, err := client.LoadInventory()
+	if err != nil {
+		return fmt.Errorf("discover: load inventory: %w", err)
+	}
+
+	inv.YubiKeys = append(inv.YubiKeys, *entry)
+	if err := client.SaveInventory(inv); err != nil {
+		return fmt.Errorf("discover: save inventory: %w", err)
+	}
+
+	fmt.Fprintf(os.Stderr, "Added %q (%s) to inventory.\n", label, entry.Serial)
 	return nil
 }

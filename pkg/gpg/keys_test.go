@@ -32,8 +32,8 @@ func TestParseColonsOutput(t *testing.T) {
 	if master.Algorithm != "rsa" {
 		t.Errorf("master Algorithm = %q, want %q", master.Algorithm, "rsa")
 	}
-	if master.Usage != "scESC" {
-		t.Errorf("master Usage = %q, want %q", master.Usage, "scESC")
+	if master.Usage != "SC" {
+		t.Errorf("master Usage = %q, want %q", master.Usage, "SC")
 	}
 
 	wantCreated := time.Date(2023, 12, 31, 0, 0, 0, 0, time.UTC)
@@ -126,6 +126,45 @@ func TestParseCardStatus(t *testing.T) {
 	}
 }
 
+func TestExtractModelFromReader(t *testing.T) {
+	tests := []struct {
+		reader string
+		want   string
+	}{
+		{"Yubico YubiKey OTP FIDO CCID 00 00", "Yubico YubiKey"},
+		{"Yubico YubiKey OTP CCID 00 00", "Yubico YubiKey"},
+		{"Yubico YubiKey FIDO CCID 00", "Yubico YubiKey"},
+		{"Yubico YubiKey", "Yubico YubiKey"},
+		{"", ""},
+	}
+	for _, tt := range tests {
+		t.Run(tt.reader, func(t *testing.T) {
+			got := extractModelFromReader(tt.reader)
+			if got != tt.want {
+				t.Errorf("extractModelFromReader(%q) = %q, want %q", tt.reader, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestParseCardStatusReaderFallback(t *testing.T) {
+	// Card status without cardtype but with Reader.
+	input := `Reader:Yubico YubiKey OTP FIDO CCID 00 00
+serial:99887766
+fpr:AAAA1111BBBB2222CCCC3333DDDD4444EEEE5555:FFFF6666AAAA7777BBBB8888CCCC9999DDDD0000:1111222233334444555566667777888899990000
+`
+	info, err := parseCardStatus(input)
+	if err != nil {
+		t.Fatalf("parseCardStatus() error: %v", err)
+	}
+	if info.Model != "Yubico YubiKey" {
+		t.Errorf("Model = %q, want %q", info.Model, "Yubico YubiKey")
+	}
+	if info.Serial != "99887766" {
+		t.Errorf("Serial = %q, want %q", info.Serial, "99887766")
+	}
+}
+
 func TestParseCardStatusNoCard(t *testing.T) {
 	_, err := parseCardStatus("")
 	if err == nil {
@@ -161,6 +200,267 @@ func TestParseEpoch(t *testing.T) {
 	zero := parseEpoch("invalid")
 	if !zero.IsZero() {
 		t.Errorf("parseEpoch(\"invalid\") should be zero, got %v", zero)
+	}
+}
+
+func TestParseColonsOutputExpiredKeys(t *testing.T) {
+	data, err := os.ReadFile("../../testdata/list-keys-expired.txt")
+	if err != nil {
+		t.Fatalf("read testdata: %v", err)
+	}
+
+	keys, err := parseColonsOutput(string(data))
+	if err != nil {
+		t.Fatalf("parseColonsOutput() error: %v", err)
+	}
+
+	// Should parse 3 keys: 1 master + 2 subkeys (one expired, one valid).
+	if len(keys) != 3 {
+		t.Fatalf("expected 3 keys, got %d", len(keys))
+	}
+
+	// Expired subkey should have expiry in the past.
+	expired := keys[1]
+	if expired.KeyID != "886F425C412784FD" {
+		t.Errorf("expired key ID = %q, want %q", expired.KeyID, "886F425C412784FD")
+	}
+	if expired.Expires.IsZero() {
+		t.Error("expired key should have an expiry date")
+	}
+	// Created 2023-01-01, expired 2023-12-31.
+	wantExpiry := time.Date(2023, 12, 31, 0, 0, 0, 0, time.UTC)
+	if !expired.Expires.Equal(wantExpiry) {
+		t.Errorf("expired key Expires = %v, want %v", expired.Expires, wantExpiry)
+	}
+}
+
+func TestParseColonsOutputRevokedKeys(t *testing.T) {
+	data, err := os.ReadFile("../../testdata/list-keys-revoked.txt")
+	if err != nil {
+		t.Fatalf("read testdata: %v", err)
+	}
+
+	keys, err := parseColonsOutput(string(data))
+	if err != nil {
+		t.Fatalf("parseColonsOutput() error: %v", err)
+	}
+
+	// Should parse 3 keys: 1 master + 2 subkeys (one revoked).
+	if len(keys) != 3 {
+		t.Fatalf("expected 3 keys, got %d", len(keys))
+	}
+
+	// The revoked subkey still parses -- validity is just a field, not filtered.
+	revoked := keys[1]
+	if revoked.KeyID != "886F425C412784FD" {
+		t.Errorf("revoked key ID = %q, want %q", revoked.KeyID, "886F425C412784FD")
+	}
+}
+
+func TestParseColonsOutputMultipleUIDs(t *testing.T) {
+	data, err := os.ReadFile("../../testdata/list-keys-multiuid.txt")
+	if err != nil {
+		t.Fatalf("read testdata: %v", err)
+	}
+
+	keys, err := parseColonsOutput(string(data))
+	if err != nil {
+		t.Fatalf("parseColonsOutput() error: %v", err)
+	}
+
+	// uid records are skipped; should parse 1 master + 1 subkey.
+	if len(keys) != 2 {
+		t.Fatalf("expected 2 keys, got %d", len(keys))
+	}
+	if keys[0].Fingerprint != "6E1FD854CD2D225DDAED8EB7822B3952F976544E" {
+		t.Errorf("master fp = %q", keys[0].Fingerprint)
+	}
+}
+
+func TestParseColonsOutputKeysOnCard(t *testing.T) {
+	data, err := os.ReadFile("../../testdata/list-keys-oncard.txt")
+	if err != nil {
+		t.Fatalf("read testdata: %v", err)
+	}
+
+	keys, err := parseColonsOutput(string(data))
+	if err != nil {
+		t.Fatalf("parseColonsOutput() error: %v", err)
+	}
+
+	// 1 master + 2 subkeys on card.
+	if len(keys) != 3 {
+		t.Fatalf("expected 3 keys, got %d", len(keys))
+	}
+
+	// Card serial should be populated for subkeys.
+	if keys[1].CardSerial != "12345678" {
+		t.Errorf("sign subkey CardSerial = %q, want %q", keys[1].CardSerial, "12345678")
+	}
+	if keys[2].CardSerial != "12345678" {
+		t.Errorf("encrypt subkey CardSerial = %q, want %q", keys[2].CardSerial, "12345678")
+	}
+}
+
+func TestParseColonsOutputShortFields(t *testing.T) {
+	// Lines with fewer than 12 fields should be skipped.
+	input := "pub:u:4096:1:AABBCCDD\nsub:short\n"
+	keys, err := parseColonsOutput(input)
+	if err != nil {
+		t.Fatalf("parseColonsOutput() error: %v", err)
+	}
+	if len(keys) != 0 {
+		t.Errorf("expected 0 keys from short fields, got %d", len(keys))
+	}
+}
+
+func TestValidateFingerprint(t *testing.T) {
+	tests := []struct {
+		input   string
+		wantErr bool
+	}{
+		{"6E1FD854CD2D225DDAED8EB7822B3952F976544E", false},
+		{"aaaa1111bbbb2222cccc3333dddd4444eeee5555", false},
+		{"", true},
+		{"too-short", true},
+		{"6E1FD854CD2D225DDAED8EB7822B3952F976544G", true}, // G not hex
+		{"6E1FD854CD2D225DDAED8EB7822B3952F976544", true},  // 39 chars
+	}
+	for _, tt := range tests {
+		t.Run(tt.input, func(t *testing.T) {
+			err := ValidateFingerprint(tt.input)
+			if (err != nil) != tt.wantErr {
+				t.Errorf("ValidateFingerprint(%q) error = %v, wantErr %v", tt.input, err, tt.wantErr)
+			}
+		})
+	}
+}
+
+func TestValidateKeyID(t *testing.T) {
+	tests := []struct {
+		input   string
+		wantErr bool
+	}{
+		{"886F425C412784FD", false},
+		{"aabbccdd11223344", false},
+		{"", true},
+		{"short", true},
+		{"886F425C412784F", true},   // 15 chars
+		{"886F425C412784FDX", true}, // 17 chars
+	}
+	for _, tt := range tests {
+		t.Run(tt.input, func(t *testing.T) {
+			err := ValidateKeyID(tt.input)
+			if (err != nil) != tt.wantErr {
+				t.Errorf("ValidateKeyID(%q) error = %v, wantErr %v", tt.input, err, tt.wantErr)
+			}
+		})
+	}
+}
+
+func TestValidateSerial(t *testing.T) {
+	tests := []struct {
+		input   string
+		wantErr bool
+	}{
+		{"12345678", false},
+		{"0", false},
+		{"", true},
+		{"abc", true},
+		{"123-456", true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.input, func(t *testing.T) {
+			err := ValidateSerial(tt.input)
+			if (err != nil) != tt.wantErr {
+				t.Errorf("ValidateSerial(%q) error = %v, wantErr %v", tt.input, err, tt.wantErr)
+			}
+		})
+	}
+}
+
+func TestTruncate(t *testing.T) {
+	tests := []struct {
+		input  string
+		maxLen int
+		want   string
+	}{
+		{"hello", 10, "hello"},
+		{"hello world", 5, "hello..."},
+		{"", 5, ""},
+		{"  padded  ", 10, "padded"},
+	}
+	for _, tt := range tests {
+		got := truncate(tt.input, tt.maxLen)
+		if got != tt.want {
+			t.Errorf("truncate(%q, %d) = %q, want %q", tt.input, tt.maxLen, got, tt.want)
+		}
+	}
+}
+
+func TestSlotForIndex(t *testing.T) {
+	c := &Client{}
+	tests := []struct {
+		idx  int
+		want int
+	}{
+		{1, 1},
+		{2, 2},
+		{3, 3},
+		{0, 1},  // out of range, defaults to 1
+		{4, 1},  // out of range
+		{-1, 1}, // negative
+	}
+	for _, tt := range tests {
+		got := c.slotForIndex(tt.idx)
+		if got != tt.want {
+			t.Errorf("slotForIndex(%d) = %d, want %d", tt.idx, got, tt.want)
+		}
+	}
+}
+
+func TestUsageLabel(t *testing.T) {
+	tests := []struct {
+		input string
+		want  string
+	}{
+		{"s", "sign"},
+		{"e", "encrypt"},
+		{"a", "auth"},
+		{"C", "C"},
+		{"unknown", "unknown"},
+	}
+	for _, tt := range tests {
+		got := usageLabel(tt.input)
+		if got != tt.want {
+			t.Errorf("usageLabel(%q) = %q, want %q", tt.input, got, tt.want)
+		}
+	}
+}
+
+func TestParseUsage(t *testing.T) {
+	tests := []struct {
+		recType string
+		caps    string
+		want    string
+	}{
+		{"pub", "scESC", "SC"},
+		{"sec", "scESC", "SC"},
+		{"pub", "cESCA", "C"},
+		{"pub", "eESC", "E"},
+		{"sub", "s", "s"},
+		{"sub", "e", "e"},
+		{"ssb", "a", "a"},
+		{"pub", "", ""},
+		{"sub", "", ""},
+	}
+	for _, tt := range tests {
+		t.Run(tt.recType+"_"+tt.caps, func(t *testing.T) {
+			got := parseUsage(tt.recType, tt.caps)
+			if got != tt.want {
+				t.Errorf("parseUsage(%q, %q) = %q, want %q", tt.recType, tt.caps, got, tt.want)
+			}
+		})
 	}
 }
 
