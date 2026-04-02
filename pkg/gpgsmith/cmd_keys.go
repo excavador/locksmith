@@ -5,12 +5,28 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
+	"strings"
 	"text/tabwriter"
+	"time"
 
 	"github.com/urfave/cli/v3"
 
 	"github.com/excavador/locksmith/pkg/gpg"
 )
+
+// keyStatus returns a human-readable status for a key based on validity and expiry.
+func keyStatus(k *gpg.SubKey) string {
+	switch k.Validity {
+	case "r":
+		return "revoked"
+	case "e":
+		return "expired"
+	}
+	if !k.Expires.IsZero() && k.Expires.Before(time.Now()) {
+		return "expired"
+	}
+	return "active"
+}
 
 func keysCmd() *cli.Command {
 	return &cli.Command{
@@ -44,6 +60,7 @@ func keysCmd() *cli.Command {
 				Action: keysPublish,
 			},
 			{Name: "ssh-pubkey", Usage: "export auth subkey as SSH public key", Action: keysSSHPubKey},
+			{Name: "lookup", Usage: "check which keyservers have your public key", Action: keysLookup},
 			{Name: "status", Usage: "show key and card info", Action: keysStatus},
 			{
 				Name:  "config",
@@ -69,10 +86,19 @@ func newGPGClient(ctx context.Context) (*gpg.Client, error) {
 	})
 }
 
-func loadGPGConfig(client *gpg.Client) (*gpg.Config, error) {
+func loadGPGConfig(ctx context.Context, client *gpg.Client) (*gpg.Config, error) {
 	cfg, err := client.LoadConfig()
 	if err != nil {
-		return nil, fmt.Errorf("load GPG config: %w (run keys config or auto-discover)", err)
+		// Fall back to auto-discover + save when config file doesn't exist.
+		cfg, adErr := client.AutoDiscoverConfig(ctx)
+		if adErr != nil {
+			return nil, fmt.Errorf("load GPG config: %w (auto-discover also failed: %w)", err, adErr)
+		}
+		if saveErr := client.SaveConfig(cfg); saveErr != nil {
+			return nil, fmt.Errorf("load GPG config: auto-discovered but failed to save: %w", saveErr)
+		}
+		fmt.Fprintln(os.Stderr, "gpgsmith.yaml auto-discovered and saved")
+		return cfg, nil
 	}
 	return cfg, nil
 }
@@ -83,7 +109,7 @@ func keysGenerate(ctx context.Context, _ *cli.Command) error {
 		return err
 	}
 
-	cfg, err := loadGPGConfig(client)
+	cfg, err := loadGPGConfig(ctx, client)
 	if err != nil {
 		return err
 	}
@@ -101,7 +127,7 @@ func keysToCard(ctx context.Context, cmd *cli.Command) error {
 		return err
 	}
 
-	cfg, err := loadGPGConfig(client)
+	cfg, err := loadGPGConfig(ctx, client)
 	if err != nil {
 		return err
 	}
@@ -119,10 +145,18 @@ func keysToCard(ctx context.Context, cmd *cli.Command) error {
 		}
 	}
 
-	// S/E/A subkeys are typically indices 1, 2, 3 after the master key.
-	indices := []int{1, 2, 3}
+	// Find the latest S/E/A subkeys to move to card.
+	keys, err := client.ListSecretKeys(ctx)
+	if err != nil {
+		return fmt.Errorf("to-card: %w", err)
+	}
 
-	return client.MoveToCard(ctx, cfg.MasterFP, indices)
+	keyIDs := gpg.LatestSubkeyIDs(keys)
+	if len(keyIDs) == 0 {
+		return fmt.Errorf("to-card: no S/E/A subkeys found")
+	}
+
+	return client.MoveToCard(ctx, cfg.MasterFP, keyIDs)
 }
 
 func keysList(ctx context.Context, _ *cli.Command) error {
@@ -139,12 +173,13 @@ func keysList(ctx context.Context, _ *cli.Command) error {
 	inv, _ := client.LoadInventory()
 
 	w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
-	_, _ = fmt.Fprintln(w, "KEY ID\tALGO\tUSAGE\tCREATED\tEXPIRES\tCARD")
+	_, _ = fmt.Fprintln(w, "KEY ID\tALGO\tUSAGE\tSTATUS\tCREATED\tEXPIRES\tCARD")
 	for i := range keys {
 		expires := "-"
 		if !keys[i].Expires.IsZero() {
 			expires = keys[i].Expires.Format("2006-01-02")
 		}
+		status := keyStatus(&keys[i])
 		card := ""
 		if keys[i].CardSerial != "" {
 			if inv != nil {
@@ -157,10 +192,24 @@ func keysList(ctx context.Context, _ *cli.Command) error {
 				card = keys[i].CardSerial
 			}
 		}
-		_, _ = fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\t%s\n",
+		if card == "" && inv != nil {
+			for j := range inv.YubiKeys {
+				for k := range inv.YubiKeys[j].Subkeys {
+					if inv.YubiKeys[j].Subkeys[k].KeyID == keys[i].KeyID {
+						card = inv.YubiKeys[j].Label
+						break
+					}
+				}
+				if card != "" {
+					break
+				}
+			}
+		}
+		_, _ = fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\t%s\t%s\n",
 			keys[i].KeyID,
 			keys[i].Algorithm,
 			keys[i].Usage,
+			status,
 			keys[i].Created.Format("2006-01-02"),
 			expires,
 			card,
@@ -180,7 +229,7 @@ func keysRevoke(ctx context.Context, cmd *cli.Command) error {
 		return err
 	}
 
-	cfg, err := loadGPGConfig(client)
+	cfg, err := loadGPGConfig(ctx, client)
 	if err != nil {
 		return err
 	}
@@ -194,7 +243,7 @@ func keysPublish(ctx context.Context, cmd *cli.Command) error {
 		return err
 	}
 
-	cfg, err := loadGPGConfig(client)
+	cfg, err := loadGPGConfig(ctx, client)
 	if err != nil {
 		return err
 	}
@@ -207,8 +256,16 @@ func keysPublish(ctx context.Context, cmd *cli.Command) error {
 				filtered = append(filtered, t)
 			}
 		}
+		// If the target type is valid but not in config, add it with defaults.
 		if len(filtered) == 0 {
-			return fmt.Errorf("no publish target matching %q", targetFilter)
+			switch targetFilter {
+			case "github":
+				filtered = []gpg.PublishTarget{{Type: "github"}}
+			case "keyserver":
+				return fmt.Errorf("no keyserver configured (use keys config to add one)")
+			default:
+				return fmt.Errorf("unknown publish target type %q (valid: keyserver, github)", targetFilter)
+			}
 		}
 		targets = filtered
 	}
@@ -236,13 +293,73 @@ func keysPublish(ctx context.Context, cmd *cli.Command) error {
 	return firstErr
 }
 
+func keysLookup(ctx context.Context, _ *cli.Command) error {
+	client, err := newGPGClient(ctx)
+	if err != nil {
+		return err
+	}
+
+	cfg, err := loadGPGConfig(ctx, client)
+	if err != nil {
+		return err
+	}
+
+	// Collect unique keyservers: configured + well-known.
+	seen := map[string]bool{}
+	var servers []string
+	for _, t := range cfg.PublishTargets {
+		if t.Type == "keyserver" && t.URL != "" && !seen[t.URL] {
+			servers = append(servers, t.URL)
+			seen[t.URL] = true
+		}
+	}
+	for _, s := range gpg.WellKnownKeyservers {
+		if !seen[s] {
+			servers = append(servers, s)
+			seen[s] = true
+		}
+	}
+
+	fmt.Fprintf(os.Stderr, "Looking up %s on %d keyservers + GitHub...\n", cfg.MasterFP, len(servers))
+
+	results := client.LookupKeyservers(ctx, cfg.MasterFP, servers)
+
+	// Also check GitHub.
+	ghResult := client.LookupGitHub(ctx, cfg.MasterFP)
+
+	w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
+	_, _ = fmt.Fprintln(w, "TARGET\tSTATUS")
+	for _, r := range results {
+		status := "found"
+		if !r.Found {
+			if r.Err != nil && strings.Contains(r.Err.Error(), "context deadline exceeded") {
+				status = "timeout"
+			} else {
+				status = "not found"
+			}
+		}
+		_, _ = fmt.Fprintf(w, "%s\t%s\n", r.URL, status)
+	}
+	// GitHub result.
+	ghStatus := "found"
+	if !ghResult.Found {
+		if ghResult.Err != nil {
+			ghStatus = ghResult.Err.Error()
+		} else {
+			ghStatus = "not found"
+		}
+	}
+	_, _ = fmt.Fprintf(w, "%s\t%s\n", "github", ghStatus)
+	return w.Flush()
+}
+
 func keysSSHPubKey(ctx context.Context, _ *cli.Command) error {
 	client, err := newGPGClient(ctx)
 	if err != nil {
 		return err
 	}
 
-	cfg, err := loadGPGConfig(client)
+	cfg, err := loadGPGConfig(ctx, client)
 	if err != nil {
 		return err
 	}

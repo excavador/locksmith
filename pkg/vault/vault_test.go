@@ -677,3 +677,65 @@ func TestDiscardRejectsInvalidWorkdir(t *testing.T) {
 		t.Fatal("Discard() should reject non-locksmith workdir")
 	}
 }
+
+func TestVaultImportCreatesVaultDir(t *testing.T) {
+	ctx := context.Background()
+	logger := testLogger()
+
+	// Create a source dir with a dummy file.
+	sourceDir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(sourceDir, "dummy.txt"), []byte("data"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	// Point vault dir to a non-existent subdirectory within a temp dir.
+	parentDir := t.TempDir()
+	vaultDir := filepath.Join(parentDir, "new-vault")
+
+	// Confirm it doesn't exist yet.
+	if _, err := os.Stat(vaultDir); !os.IsNotExist(err) {
+		t.Fatalf("vault dir should not exist yet, got err: %v", err)
+	}
+
+	cfg := &Config{VaultDir: vaultDir}
+	v, err := NewWithPassphrase(cfg, "test-passphrase", logger)
+	if err != nil {
+		t.Fatalf("NewWithPassphrase() error: %v", err)
+	}
+
+	// Import should succeed and create the vault dir.
+	snap, err := v.Import(ctx, sourceDir)
+	if err != nil {
+		t.Fatalf("Import() error: %v", err)
+	}
+	if snap.Message != "initial-import" {
+		t.Errorf("Import message = %q, want %q", snap.Message, "initial-import")
+	}
+
+	// Verify the vault dir was created with correct permissions (0700).
+	info, err := os.Stat(vaultDir)
+	if err != nil {
+		t.Fatalf("vault dir should exist after Import: %v", err)
+	}
+	if !info.IsDir() {
+		t.Fatal("vault dir should be a directory")
+	}
+	if info.Mode().Perm() != 0o700 {
+		t.Errorf("vault dir permissions = %o, want 0700", info.Mode().Perm())
+	}
+
+	// Verify the snapshot can be opened (round-trip).
+	workdir, _, err := v.Open(ctx)
+	if err != nil {
+		t.Fatalf("Open() after Import to new dir: %v", err)
+	}
+	defer os.RemoveAll(workdir)
+
+	data, err := os.ReadFile(filepath.Join(workdir, "dummy.txt"))
+	if err != nil {
+		t.Fatalf("read dummy.txt: %v", err)
+	}
+	if string(data) != "data" {
+		t.Errorf("dummy.txt content = %q, want %q", string(data), "data")
+	}
+}

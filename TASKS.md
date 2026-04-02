@@ -51,51 +51,43 @@
 - [x] #38: Seal default message "manual-session" → "session-YYYY-MM-DD"
 - [x] #39: Review of round 3 fixes
 
-## Open — Bugs
-
-### #59: keys list doesn't show card label for some subkeys
-The "red" YubiKey subkeys show empty CARD column because gpg doesn't have card
-stubs for them (local private keys exist). Need to cross-reference with
-card-status output or inventory data.
-**Files:** pkg/gpg/keys.go, pkg/gpgsmith/cmd_keys.go
-**Priority:** medium
-
-### #60: card model too generic — "Yubico YubiKey" for all models
-Should show specific model (YubiKey 5 NFC, YubiKey 5Ci, YubiKey 5 Nano, etc.).
-extractModelFromReader strips too much from gpg --card-status Reader line.
-**File:** pkg/gpg/inventory.go
-**Priority:** medium
-
-### #63: vault import should create vault dir if it doesn't exist
-After `vault config set vault_dir /path`, `vault import` fails if /path doesn't
-exist. Should auto-create the directory like `vault create` does.
-**File:** pkg/gpgsmith/cmd_vault.go or pkg/vault/vault.go
-**Priority:** high (blocks first-time flow)
-
-### #64: keys generate fails — gpgsmith.yaml not saved after auto-discover
-`keys config show` auto-discovers master key correctly but doesn't save
-gpgsmith.yaml to GNUPGHOME. Then `keys generate` fails with "not found".
-Should auto-save config on first use or trigger auto-discover + save.
-**File:** pkg/gpgsmith/cmd_keys.go, pkg/gpg/config.go
-**Priority:** high (blocks key generation)
+### Round 4 — Bug fixes & enhancements
+- [x] #59: keys list doesn't show card label for some subkeys
+- [x] #60: card model too generic — ykman integration for specific model detection
+- [x] #61: use ykman for YubiKey model detection and info
+- [x] #63: vault import should create vault dir if it doesn't exist
+- [x] #64: keys generate fails — gpgsmith.yaml not saved after auto-discover
+- [x] #62: card discover-all — dropped (ykman/gpg only see one card at a time)
+- [x] #66: keys list STATUS column — show active/expired/revoked per subkey
+- [x] #67: keys revoke broken — was using --quick-revoke-sig (UID signatures), fixed to use --edit-key revkey
+- [x] #68: MoveToCard used hardcoded indices {1,2,3} — rewritten to use key IDs and dynamic index resolution
+- [x] #69: keys lookup — query configured + well-known keyservers for key publish status
+- [x] #70: keys publish to GitHub now also uploads SSH public key via gh ssh-key add
+- [x] #71: Auto-discover defaults now include keys.openpgp.org, keyserver.ubuntu.com, and github
+- [x] #72: card discover updates model on re-discovery when ykman provides more specific info
 
 ## Open — Features
 
-### #61: use ykman for YubiKey model detection and info
-When ykman (yubikey-manager CLI) is available, use `ykman info` for:
-- Device type: exact model (YubiKey 5Ci, YubiKey 5 NFC, etc.)
-- Firmware version, form factor
-Requirements:
-1. ykman is OPTIONAL — detect via exec.LookPath, fall back to gpg --card-status
-2. If ykman not found, print recommendation to install
-3. If ykman available and inventory has generic model, auto-update
-4. README should mention ykman as optional dependency
+### #65: keys install-pubkey — export public key to system keyring
+On a new workstation the card has the private key but `~/.gnupg` lacks the public
+key, so gpg-agent can't use the card for SSH/signing. `keys install-pubkey` should
+run `gpg --export <master_fp> | gpg --homedir ~/.gnupg --import` from inside a
+vault session. Could also be offered automatically during `vault open` when a card
+is detected but the system keyring is missing the public key.
+**Files:** pkg/gpgsmith/cmd_keys.go, pkg/gpg/client.go
 **Priority:** medium
 
-### #62: card discover-all — batch discover all connected YubiKeys
-Using `ykman list --serials`, discover all connected YubiKeys at once.
-Requires ykman. Falls back to single-card gpg --card-status.
-**Priority:** low
+### #73: setup — first-time wizard
+`gpgsmith setup` should walk through: vault create + keys create + card provision.
+Currently stubbed with `notImplemented`.
+**Files:** pkg/gpgsmith/cmd_setup.go
+**Priority:** medium
+
+### #74: keys create — generate new master key + subkeys
+Generate a new master key (Certify-only) and S/E/A subkeys from scratch.
+Currently stubbed with `notImplemented`.
+**Files:** pkg/gpgsmith/cmd_keys.go, pkg/gpg/subkeys.go
+**Priority:** medium
 
 ## Open — Minor / Cosmetic
 

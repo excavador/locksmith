@@ -90,6 +90,8 @@ func (c *Client) AutoDiscoverConfig(ctx context.Context) (*Config, error) {
 		SubkeyExpiry: "2y",
 		PublishTargets: []PublishTarget{
 			{Type: "keyserver", URL: "hkps://keys.openpgp.org"},
+			{Type: "keyserver", URL: "hkps://keyserver.ubuntu.com"},
+			{Type: "github"},
 		},
 	}
 

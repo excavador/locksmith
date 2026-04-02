@@ -114,6 +114,13 @@ func (v *Vault) Import(ctx context.Context, sourcePath string) (Snapshot, error)
 		return Snapshot{}, fmt.Errorf("vault import: source is not a directory: %s", sourcePath)
 	}
 
+	if err := os.MkdirAll(v.dir, 0o700); err != nil {
+		return Snapshot{}, fmt.Errorf("vault import: create vault dir: %w", err)
+	}
+	v.logger.InfoContext(ctx, "vault dir ensured",
+		slog.String("dir", v.dir),
+	)
+
 	return v.sealDir(ctx, sourcePath, "initial-import")
 }
 

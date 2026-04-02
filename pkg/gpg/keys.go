@@ -18,6 +18,7 @@ type (
 		Created     time.Time
 		Expires     time.Time
 		CardSerial  string
+		Validity    string // validity field from colons output: "r" = revoked, "e" = expired, etc.
 	}
 
 	// CardInfo holds information from gpg --card-status.
@@ -101,6 +102,7 @@ func parseColonsOutput(output string) ([]SubKey, error) {
 				KeyID:     fields[4],
 				Algorithm: algoName(fields[3]),
 				Usage:     parseUsage(recType, fields[11]),
+				Validity:  fields[1],
 			}
 			if fields[5] != "" {
 				k.Created = parseEpoch(fields[5])
@@ -209,6 +211,44 @@ func extractSerialFromAppID(appID string) string {
 		return appID[20:28]
 	}
 	return appID
+}
+
+// LatestSubkeyIDs returns the key IDs of the most recently created non-revoked
+// S, E, A subkeys. This is used to determine which subkeys to move to a card.
+func LatestSubkeyIDs(keys []SubKey) []string {
+	type candidate struct {
+		keyID   string
+		created time.Time
+	}
+
+	// Track the latest subkey for each usage type.
+	latest := map[string]candidate{} // usage -> candidate
+
+	for i := range keys {
+		k := &keys[i]
+		// Skip master key and revoked keys.
+		if strings.Contains(k.Usage, "C") || k.Validity == "r" {
+			continue
+		}
+
+		usage := strings.ToUpper(k.Usage)
+		for _, u := range []string{"S", "E", "A"} {
+			if strings.Contains(usage, u) {
+				if prev, ok := latest[u]; !ok || k.Created.After(prev.created) {
+					latest[u] = candidate{keyID: k.KeyID, created: k.Created}
+				}
+			}
+		}
+	}
+
+	// Return in S, E, A order.
+	var ids []string
+	for _, u := range []string{"S", "E", "A"} {
+		if c, ok := latest[u]; ok {
+			ids = append(ids, c.keyID)
+		}
+	}
+	return ids
 }
 
 // parseEpoch converts a Unix epoch string to time.Time.

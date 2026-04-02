@@ -22,18 +22,51 @@ const (
 )
 
 // MoveToCard transfers subkeys to the connected smart card using --edit-key keytocard.
-// The slots parameter maps GPG slot numbers (1=sign, 2=encrypt, 3=auth) to subkey indices.
-func (c *Client) MoveToCard(ctx context.Context, masterFP string, subkeyIndices []int) error {
+// keyIDs specifies which subkeys to move (by long key ID). The correct gpg subkey index
+// and card slot are determined automatically from the keyring.
+func (c *Client) MoveToCard(ctx context.Context, masterFP string, keyIDs []string) error {
 	if err := ValidateFingerprint(masterFP); err != nil {
 		return fmt.Errorf("move to card: %w", err)
 	}
-	for _, idx := range subkeyIndices {
+
+	// List all keys to determine subkey indices and usages.
+	keys, err := c.ListSecretKeys(ctx)
+	if err != nil {
+		return fmt.Errorf("move to card: %w", err)
+	}
+
+	// Build subkey index map (1-based, skipping the master key).
+	// In gpg --edit-key, "key 1" selects the first subkey, "key 2" the second, etc.
+	subkeyIdx := 0
+	type subkeyInfo struct {
+		index int    // 1-based gpg edit-key index
+		usage string // S, E, A, etc.
+	}
+	idxMap := make(map[string]subkeyInfo)
+	for i := range keys {
+		if strings.Contains(keys[i].Usage, "C") {
+			continue // skip master key
+		}
+		subkeyIdx++
+		idxMap[keys[i].KeyID] = subkeyInfo{index: subkeyIdx, usage: keys[i].Usage}
+	}
+
+	for _, keyID := range keyIDs {
+		info, ok := idxMap[keyID]
+		if !ok {
+			return fmt.Errorf("move to card: subkey %s not found in keyring", keyID)
+		}
+
+		slot := slotForUsage(info.usage)
+
 		c.logger.InfoContext(ctx, "moving subkey to card",
-			slog.Int("subkey_index", idx),
+			slog.String("key_id", keyID),
+			slog.Int("subkey_index", info.index),
+			slog.Int("slot", slot),
 		)
 
-		if err := c.keytocardSingle(ctx, masterFP, idx); err != nil {
-			return fmt.Errorf("move subkey %d to card: %w", idx, err)
+		if err := c.keytocardSingle(ctx, masterFP, info.index, slot); err != nil {
+			return fmt.Errorf("move subkey %s to card: %w", keyID, err)
 		}
 	}
 
@@ -42,11 +75,9 @@ func (c *Client) MoveToCard(ctx context.Context, masterFP string, subkeyIndices 
 
 // keytocardSingle moves a single subkey to the card via gpg --edit-key.
 // It uses --command-fd to feed interactive commands to gpg.
-func (c *Client) keytocardSingle(ctx context.Context, masterFP string, subkeyIdx int) error {
+func (c *Client) keytocardSingle(ctx context.Context, masterFP string, subkeyIdx int, slot int) error {
 	// Build the interactive command sequence:
 	// key N -> keytocard -> slot -> save
-	slot := c.slotForIndex(subkeyIdx)
-
 	commands := fmt.Sprintf("key %d\nkeytocard\n%d\ny\nsave\n", subkeyIdx, slot)
 
 	args := []string{
@@ -82,11 +113,16 @@ func (c *Client) keytocardSingle(ctx context.Context, masterFP string, subkeyIdx
 	return nil
 }
 
-// slotForIndex returns the card slot number for a subkey index.
-// Convention: subkey 1 = sign (slot 1), subkey 2 = encrypt (slot 2), subkey 3 = auth (slot 3).
-func (c *Client) slotForIndex(idx int) int {
-	if idx >= 1 && idx <= 3 {
-		return idx
+// slotForUsage returns the card slot number based on the subkey's usage capability.
+// Slot 1 = Signature, Slot 2 = Encryption, Slot 3 = Authentication.
+func slotForUsage(usage string) int {
+	u := strings.ToUpper(usage)
+	switch {
+	case strings.Contains(u, "E"):
+		return 2
+	case strings.Contains(u, "A"):
+		return 3
+	default:
+		return 1 // sign is default
 	}
-	return 1
 }

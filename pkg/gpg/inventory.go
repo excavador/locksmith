@@ -96,6 +96,15 @@ func (c *Client) DiscoverCard(ctx context.Context) (*YubiKeyEntry, error) {
 		Status:        "active",
 	}
 
+	// Try ykman for more specific model info.
+	if YkmanAvailable() {
+		if ykInfo, ykErr := c.YkmanInfo(ctx); ykErr == nil {
+			if ykInfo.DeviceType != "" {
+				entry.Model = ykInfo.DeviceType
+			}
+		}
+	}
+
 	// Match card fingerprints against keyring to populate subkey refs.
 	keys, err := c.ListKeys(ctx)
 	if err != nil {

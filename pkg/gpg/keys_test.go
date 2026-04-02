@@ -398,23 +398,25 @@ func TestTruncate(t *testing.T) {
 	}
 }
 
-func TestSlotForIndex(t *testing.T) {
-	c := &Client{}
+func TestSlotForUsage(t *testing.T) {
 	tests := []struct {
-		idx  int
-		want int
+		usage string
+		want  int
 	}{
-		{1, 1},
-		{2, 2},
-		{3, 3},
-		{0, 1},  // out of range, defaults to 1
-		{4, 1},  // out of range
-		{-1, 1}, // negative
+		{"S", 1}, // sign -> slot 1
+		{"E", 2}, // encrypt -> slot 2
+		{"A", 3}, // auth -> slot 3
+		{"s", 1}, // case insensitive
+		{"e", 2},
+		{"a", 3},
+		{"SE", 2}, // encrypt takes priority when combined
+		{"SA", 3}, // auth takes priority over sign when combined
+		{"", 1},   // empty defaults to sign slot
 	}
 	for _, tt := range tests {
-		got := c.slotForIndex(tt.idx)
+		got := slotForUsage(tt.usage)
 		if got != tt.want {
-			t.Errorf("slotForIndex(%d) = %d, want %d", tt.idx, got, tt.want)
+			t.Errorf("slotForUsage(%q) = %d, want %d", tt.usage, got, tt.want)
 		}
 	}
 }

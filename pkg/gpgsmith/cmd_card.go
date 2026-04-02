@@ -67,7 +67,7 @@ func cardProvision(ctx context.Context, cmd *cli.Command) error {
 		return err
 	}
 
-	cfg, err := loadGPGConfig(client)
+	cfg, err := loadGPGConfig(ctx, client)
 	if err != nil {
 		return err
 	}
@@ -81,9 +81,18 @@ func cardProvision(ctx context.Context, cmd *cli.Command) error {
 		return fmt.Errorf("provision: generate subkeys: %w", err)
 	}
 
-	// Move to card.
-	indices := []int{1, 2, 3}
-	if err := client.MoveToCard(ctx, cfg.MasterFP, indices); err != nil {
+	// Find the latest S/E/A subkeys and move to card.
+	keys, listErr := client.ListSecretKeys(ctx)
+	if listErr != nil {
+		return fmt.Errorf("provision: list keys: %w", listErr)
+	}
+
+	keyIDs := gpg.LatestSubkeyIDs(keys)
+	if len(keyIDs) == 0 {
+		return fmt.Errorf("provision: no S/E/A subkeys found")
+	}
+
+	if err := client.MoveToCard(ctx, cfg.MasterFP, keyIDs); err != nil {
 		return fmt.Errorf("provision: to-card: %w", err)
 	}
 
@@ -125,9 +134,9 @@ func cardProvision(ctx context.Context, cmd *cli.Command) error {
 		mode = "unique-keys"
 	}
 
-	// Build subkey refs from keys now on the card.
+	// Build subkey refs from keys now on the card (re-list after keytocard).
 	var subkeys []gpg.SubKeyRef
-	keys, listErr := client.ListSecretKeys(ctx)
+	keys, listErr = client.ListSecretKeys(ctx)
 	if listErr == nil {
 		for i := range keys {
 			if keys[i].CardSerial == info.Serial {
@@ -180,7 +189,7 @@ func cardRotate(ctx context.Context, cmd *cli.Command) error {
 		return err
 	}
 
-	cfg, err := loadGPGConfig(client)
+	cfg, err := loadGPGConfig(ctx, client)
 	if err != nil {
 		return err
 	}
@@ -212,9 +221,18 @@ func cardRotate(ctx context.Context, cmd *cli.Command) error {
 		return fmt.Errorf("rotate: generate subkeys: %w", err)
 	}
 
-	// Move to card.
-	indices := []int{1, 2, 3}
-	if err := client.MoveToCard(ctx, cfg.MasterFP, indices); err != nil {
+	// Find the latest S/E/A subkeys (just generated) and move to card.
+	rotateKeys, rotateListErr := client.ListSecretKeys(ctx)
+	if rotateListErr != nil {
+		return fmt.Errorf("rotate: list keys: %w", rotateListErr)
+	}
+
+	keyIDs := gpg.LatestSubkeyIDs(rotateKeys)
+	if len(keyIDs) == 0 {
+		return fmt.Errorf("rotate: no S/E/A subkeys found after generation")
+	}
+
+	if err := client.MoveToCard(ctx, cfg.MasterFP, keyIDs); err != nil {
 		return fmt.Errorf("rotate: to-card: %w", err)
 	}
 
@@ -279,7 +297,7 @@ func cardRevoke(ctx context.Context, cmd *cli.Command) error {
 		return err
 	}
 
-	cfg, err := loadGPGConfig(client)
+	cfg, err := loadGPGConfig(ctx, client)
 	if err != nil {
 		return err
 	}
@@ -351,7 +369,24 @@ func cardInventory(ctx context.Context, _ *cli.Command) error {
 		_, _ = fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%d\t%s\n",
 			e.Serial, e.Label, e.Model, e.Status, len(e.Subkeys), e.Description)
 	}
-	return w.Flush()
+	if err := w.Flush(); err != nil {
+		return err
+	}
+
+	if !gpg.YkmanAvailable() {
+		hasGeneric := false
+		for i := range inv.YubiKeys {
+			if inv.YubiKeys[i].Model == "" || inv.YubiKeys[i].Model == "Yubico YubiKey" {
+				hasGeneric = true
+				break
+			}
+		}
+		if hasGeneric {
+			fmt.Fprintln(os.Stderr, "\nTip: install ykman (yubikey-manager) for more specific model detection.")
+		}
+	}
+
+	return nil
 }
 
 func cardDiscover(ctx context.Context, _ *cli.Command) error {
@@ -372,7 +407,17 @@ func cardDiscover(ctx context.Context, _ *cli.Command) error {
 	}
 
 	if existing := inv.FindByLabel(entry.Serial); existing != nil {
-		fmt.Fprintf(os.Stderr, "Already in inventory as %q (%s)\n", existing.Label, existing.Serial)
+		// Update model if ykman provided a more specific one.
+		if entry.Model != "" && entry.Model != existing.Model &&
+			(existing.Model == "" || existing.Model == "Yubico YubiKey") {
+			existing.Model = entry.Model
+			if err := client.SaveInventory(inv); err != nil {
+				return fmt.Errorf("discover: save inventory: %w", err)
+			}
+			fmt.Fprintf(os.Stderr, "Already in inventory as %q (%s), updated model to %s\n", existing.Label, existing.Serial, entry.Model)
+		} else {
+			fmt.Fprintf(os.Stderr, "Already in inventory as %q (%s)\n", existing.Label, existing.Serial)
+		}
 		return nil
 	}
 
