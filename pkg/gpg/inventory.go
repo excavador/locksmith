@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"gopkg.in/yaml.v3"
@@ -121,9 +122,9 @@ func (c *Client) DiscoverCard(ctx context.Context) (*YubiKeyEntry, error) {
 	return entry, nil
 }
 
-// usageLabel converts a single-letter usage code to a human-readable label.
+// usageLabel converts a usage code to a human-readable label.
 func usageLabel(usage string) string {
-	switch usage {
+	switch strings.ToLower(usage) {
 	case "s":
 		return "sign"
 	case "e":

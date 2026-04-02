@@ -35,3 +35,9 @@ func promptLineFrom(prompt string, r *os.File) (string, error) {
 
 	return strings.TrimSpace(scanner.Text()), nil
 }
+
+// shellEscapeSingleQuote escapes a string for safe use inside single quotes.
+// Single quotes in the input are replaced with '\” (end quote, escaped quote, start quote).
+func shellEscapeSingleQuote(s string) string {
+	return strings.ReplaceAll(s, "'", "'\\''")
+}

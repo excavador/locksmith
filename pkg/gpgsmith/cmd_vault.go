@@ -283,7 +283,7 @@ func startSession(ctx context.Context, v *vault.Vault, workdir string, cmd *cli.
 	// Scripted mode: output env exports.
 	fmt.Printf("export GNUPGHOME=%s;\n", workdir)
 	if pass := v.Passphrase(); pass != "" {
-		fmt.Printf("export GPGSMITH_VAULT_KEY=%s;\n", pass)
+		fmt.Printf("export GPGSMITH_VAULT_KEY='%s';\n", shellEscapeSingleQuote(pass))
 	}
 	return nil
 }
