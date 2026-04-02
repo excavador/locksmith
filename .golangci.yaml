@@ -59,23 +59,6 @@ linters:
     gocyclo:
       min-complexity: 20
 
-    gosec:
-      excludes:
-        - G402
-        - G306
-        - G401
-        - G701
-        - G702
-        - G703
-        - G704
-        - G705
-        - G706
-        - G707
-        - G708
-        - G709
-
-    govet:
-      check-shadowing: true
 
     lll:
       line-length: 160
@@ -84,7 +67,6 @@ linters:
       locale: US
 
     nolintlint:
-      allow-leading-space: true
       allow-unused: false
       require-explanation: false
       require-specific: false
@@ -157,7 +139,6 @@ issues:
   uniq-by-line: false
   new: false
   fix: false
-  exclude-use-default: false
 
 formatters:
   enable:

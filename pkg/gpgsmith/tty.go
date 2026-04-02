@@ -94,7 +94,7 @@ func zshSessionRC() *sessionRC {
 
 	escaped := shellEscapeSingleQuote(home)
 	content := fmt.Sprintf("if [ -f '%s/.zshrc' ]; then . '%s/.zshrc'; fi\nPS1=\"(gpgsmith) $PS1\"\n", escaped, escaped)
-	if err := os.WriteFile(filepath.Join(dir, ".zshrc"), []byte(content), 0o600); err != nil {
+	if err := os.WriteFile(filepath.Join(dir, ".zshrc"), []byte(content), 0o600); err != nil { //nolint:gosec // dir is our own tmpdir
 		_ = os.RemoveAll(dir)
 		return &sessionRC{cleanup: func() {}}
 	}

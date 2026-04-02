@@ -58,7 +58,7 @@ func (c *Client) ExportSSHPubKey(ctx context.Context, masterFP string) (string, 
 	filename := fmt.Sprintf("gpgsmith-%s.pub", authKey.KeyID)
 	outPath := filepath.Join(sshDir, filename)
 
-	if err := os.WriteFile(outPath, []byte(sshPubKey+"\n"), 0o644); err != nil {
+	if err := os.WriteFile(outPath, []byte(sshPubKey+"\n"), 0o644); err != nil { //nolint:gosec // SSH public key must be world-readable
 		return "", fmt.Errorf("export ssh pubkey: write %s: %w", outPath, err)
 	}
 

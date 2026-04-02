@@ -17,15 +17,16 @@ jobs:
         with:
           fetch-depth: 0
 
-      - id: setup-go
-        uses: actions/setup-go@v5
-        with:
-          go-version-file: go.mod
+      - uses: DeterminateSystems/nix-installer-action@main
 
-      - uses: goreleaser/goreleaser-action@v6
+      - uses: DeterminateSystems/magic-nix-cache-action@main
+
+      - uses: jetify-com/devbox-install-action@v0.12.0
         with:
-          version: latest
-          args: release --clean
+          enable-cache: true
+
+      - name: Release
+        run: devbox run -- goreleaser release --clean
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          GOVERSION: ${{ steps.setup-go.outputs.go-version }}
+          GOVERSION: ${{ env.GOVERSION }}
