@@ -22,11 +22,18 @@ func (c *Client) ExportSSHPubKey(ctx context.Context, masterFP string) (string, 
 		return "", fmt.Errorf("export ssh pubkey: %w", err)
 	}
 
+	// Find the latest active auth subkey (skip revoked/expired).
 	var authKey *SubKey
 	for i := range keys {
-		if strings.Contains(keys[i].Usage, "a") || strings.Contains(keys[i].Usage, "A") {
-			authKey = &keys[i]
-			break
+		k := &keys[i]
+		if !strings.Contains(k.Usage, "a") && !strings.Contains(k.Usage, "A") {
+			continue
+		}
+		if k.Validity == "r" {
+			continue // revoked
+		}
+		if authKey == nil || k.Created.After(authKey.Created) {
+			authKey = k
 		}
 	}
 	if authKey == nil {

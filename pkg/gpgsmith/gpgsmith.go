@@ -65,6 +65,7 @@ func Main(version, commit, date string) int {
 			vaultCmd(),
 			keysCmd(),
 			cardCmd(),
+			serverCmd(),
 			auditCmd(),
 			{
 				Name:  "version",

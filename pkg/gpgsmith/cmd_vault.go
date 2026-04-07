@@ -374,7 +374,7 @@ func runInteractiveSession(ctx context.Context, v *vault.Vault, workdir string, 
 		if err != nil {
 			return err
 		}
-		fmt.Fprintln(os.Stderr, "Sealed:", filepath.Base(snap.Path))
+		fmt.Fprintln(os.Stderr, "Sealed:", filepath.Base(snap.Path)) //nolint:gosec // snap.Path from internal vault
 		return nil
 	}
 }

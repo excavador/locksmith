@@ -52,7 +52,7 @@ workflows, following the ssh-agent pattern.
 ### Optional dependencies
 
 - **[ykman](https://developers.yubico.com/yubikey-manager/)** (yubikey-manager) -- enables specific YubiKey model detection (e.g., "YubiKey 5 NFC" instead of generic "Yubico YubiKey"). Install via `pip install yubikey-manager` or your package manager.
-- **[gh](https://cli.github.com/)** -- GitHub CLI, enables publishing GPG and SSH keys to GitHub via `keys publish --target github`.
+- **[gh](https://cli.github.com/)** -- GitHub CLI, enables publishing GPG and SSH keys to GitHub via `server publish github`. Requires `admin:gpg_key` and `admin:public_key` OAuth scopes.
 
 ## Installation
 
@@ -160,9 +160,8 @@ gpgsmith
 │   ├── to-card            move subkeys to YubiKey (--same-keys / --unique-keys)
 │   ├── list               list keys and subkeys
 │   ├── revoke <key-id>    revoke a specific subkey
-│   ├── publish            publish public key to configured targets (--target <name>)
+│   ├── export             export public key to local ~/.gnupg keyring
 │   ├── ssh-pubkey         export auth subkey as SSH public key (~/.ssh/)
-│   ├── lookup             check which keyservers and GitHub have your public key
 │   ├── status             show key and card info
 │   └── config
 │       ├── show           show GPG config (inside GNUPGHOME)
@@ -173,6 +172,14 @@ gpgsmith
 │   ├── revoke <label>     revoke all subkeys for a card + publish revocation
 │   ├── inventory          list all known YubiKeys
 │   └── discover           detect connected YubiKey and add to inventory
+├── server                 manage publish targets (keyservers and GitHub)
+│   ├── publish [alias...] publish public key to enabled servers (or specific aliases)
+│   ├── lookup             check which servers have your public key
+│   ├── list               list all publish targets
+│   ├── add <alias> <url>  add a custom keyserver
+│   ├── remove <alias>     remove a server from the registry
+│   ├── enable <alias>     enable a server for publishing
+│   └── disable <alias>    disable a server for publishing
 ├── audit
 │   └── show               display audit entries (--last N)
 └── version                show version information
@@ -247,7 +254,8 @@ GNUPGHOME/
 ├── trustdb.gpg
 ├── gpg.conf
 ├── private-keys-v1.d/
-├── gpgsmith.yaml              # GPG config (master_fp, algo, expiry, publish targets)
+├── gpgsmith.yaml              # GPG config (master_fp, algo, expiry)
+├── gpgsmith-servers.yaml      # publish target registry (keyservers, GitHub)
 ├── gpgsmith-inventory.yaml    # YubiKey inventory
 └── gpgsmith-audit.yaml        # audit log
 ```
@@ -335,12 +343,38 @@ Lives inside the encrypted tarball, travels with the keys. Available after
 master_fp: 6E1FD854CD2D225DDAED8EB7822B3952F976544E
 subkey_algo: rsa4096
 subkey_expiry: 2y
-publish_targets:
-  - type: keyserver
+```
+
+### Server registry: `GNUPGHOME/gpgsmith-servers.yaml`
+
+Publish targets (keyservers and GitHub) with aliases and enable/disable.
+Managed via `server` commands. Initialized with built-in defaults on first use.
+
+```yaml
+servers:
+  - alias: openpgp
+    type: keyserver
     url: hkps://keys.openpgp.org
-  - type: keyserver
+    enabled: true
+  - alias: ubuntu
+    type: keyserver
     url: hkps://keyserver.ubuntu.com
-  - type: github
+    enabled: true
+  - alias: github
+    type: github
+    enabled: false
+  - alias: mailvelope
+    type: keyserver
+    url: hkps://keys.mailvelope.com
+    enabled: false
+  - alias: mit
+    type: keyserver
+    url: hkps://pgp.mit.edu
+    enabled: false
+  - alias: gnupg
+    type: keyserver
+    url: hkps://keys.gnupg.net
+    enabled: false
 ```
 
 ### Resolution order (lowest to highest priority)

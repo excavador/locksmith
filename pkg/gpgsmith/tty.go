@@ -74,7 +74,7 @@ func bashSessionRC() *sessionRC {
 	closeErr := f.Close()
 
 	if writeErr != nil || closeErr != nil {
-		_ = os.Remove(f.Name())
+		_ = os.Remove(f.Name()) //nolint:gosec // f is a temp file we just created
 		return &sessionRC{cleanup: func() {}}
 	}
 

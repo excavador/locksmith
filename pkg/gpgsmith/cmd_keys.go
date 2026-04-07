@@ -3,7 +3,6 @@ package gpgsmith
 import (
 	"context"
 	"fmt"
-	"log/slog"
 	"os"
 	"strings"
 	"text/tabwriter"
@@ -53,15 +52,20 @@ func keysCmd() *cli.Command {
 				Action:    keysRevoke,
 			},
 			{
-				Name:  "publish",
-				Usage: "publish public key to configured targets",
-				Flags: []cli.Flag{
-					&cli.StringFlag{Name: "target", Usage: "publish to a specific target only (keyserver, github)"},
-				},
-				Action: keysPublish,
+				Name:      "publish",
+				Usage:     "publish public key (alias for 'server publish')",
+				ArgsUsage: "[alias...]",
+				Hidden:    true,
+				Action:    serverPublish,
 			},
+			{Name: "export", Usage: "export public key to local ~/.gnupg keyring", Action: keysExport},
 			{Name: "ssh-pubkey", Usage: "export auth subkey as SSH public key", Action: keysSSHPubKey},
-			{Name: "lookup", Usage: "check which keyservers have your public key", Action: keysLookup},
+			{
+				Name:   "lookup",
+				Usage:  "check which servers have your public key (alias for 'server lookup')",
+				Hidden: true,
+				Action: serverLookup,
+			},
 			{Name: "status", Usage: "show key and card info", Action: keysStatus},
 			{
 				Name:  "config",
@@ -265,7 +269,7 @@ func keysRevoke(ctx context.Context, cmd *cli.Command) error {
 	})
 }
 
-func keysPublish(ctx context.Context, cmd *cli.Command) error {
+func keysExport(ctx context.Context, _ *cli.Command) error {
 	client, err := newGPGClient(ctx)
 	if err != nil {
 		return err
@@ -276,123 +280,7 @@ func keysPublish(ctx context.Context, cmd *cli.Command) error {
 		return err
 	}
 
-	targets := cfg.PublishTargets
-	if targetFilter := cmd.String("target"); targetFilter != "" {
-		var filtered []gpg.PublishTarget
-		for _, t := range targets {
-			if t.Type == targetFilter {
-				filtered = append(filtered, t)
-			}
-		}
-		// If the target type is valid but not in config, add it with defaults.
-		if len(filtered) == 0 {
-			switch targetFilter {
-			case "github":
-				filtered = []gpg.PublishTarget{{Type: "github"}}
-			case "keyserver":
-				return fmt.Errorf("no keyserver configured (use keys config to add one)")
-			default:
-				return fmt.Errorf("unknown publish target type %q (valid: keyserver, github)", targetFilter)
-			}
-		}
-		targets = filtered
-	}
-
-	results := client.Publish(ctx, cfg.MasterFP, targets)
-	logger := loggerFrom(ctx)
-
-	var firstErr error
-	for _, r := range results {
-		if r.Err != nil {
-			logger.ErrorContext(ctx, "publish failed",
-				slog.String("target", r.Target.Type),
-				slog.String("error", r.Err.Error()),
-			)
-			if firstErr == nil {
-				firstErr = r.Err
-			}
-		} else {
-			logger.InfoContext(ctx, "published",
-				slog.String("target", r.Target.Type),
-			)
-		}
-	}
-
-	// Audit successful publishes.
-	var published []string
-	for _, r := range results {
-		if r.Err == nil {
-			published = append(published, r.Target.Type)
-		}
-	}
-	if len(published) > 0 {
-		_ = audit.Append(client.HomeDir(), audit.Entry{
-			Action:  "publish",
-			Details: fmt.Sprintf("published to %s", strings.Join(published, ", ")),
-		})
-	}
-
-	return firstErr
-}
-
-func keysLookup(ctx context.Context, _ *cli.Command) error {
-	client, err := newGPGClient(ctx)
-	if err != nil {
-		return err
-	}
-
-	cfg, err := loadGPGConfig(ctx, client)
-	if err != nil {
-		return err
-	}
-
-	// Collect unique keyservers: configured + well-known.
-	seen := map[string]bool{}
-	var servers []string
-	for _, t := range cfg.PublishTargets {
-		if t.Type == "keyserver" && t.URL != "" && !seen[t.URL] {
-			servers = append(servers, t.URL)
-			seen[t.URL] = true
-		}
-	}
-	for _, s := range gpg.WellKnownKeyservers {
-		if !seen[s] {
-			servers = append(servers, s)
-			seen[s] = true
-		}
-	}
-
-	fmt.Fprintf(os.Stderr, "Looking up %s on %d keyservers + GitHub...\n", cfg.MasterFP, len(servers))
-
-	results := client.LookupKeyservers(ctx, cfg.MasterFP, servers)
-
-	// Also check GitHub.
-	ghResult := client.LookupGitHub(ctx, cfg.MasterFP)
-
-	w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
-	_, _ = fmt.Fprintln(w, "TARGET\tSTATUS")
-	for _, r := range results {
-		status := "found"
-		if !r.Found {
-			if r.Err != nil && strings.Contains(r.Err.Error(), "context deadline exceeded") {
-				status = "timeout"
-			} else {
-				status = "not found"
-			}
-		}
-		_, _ = fmt.Fprintf(w, "%s\t%s\n", r.URL, status)
-	}
-	// GitHub result.
-	ghStatus := "found"
-	if !ghResult.Found {
-		if ghResult.Err != nil {
-			ghStatus = ghResult.Err.Error()
-		} else {
-			ghStatus = "not found"
-		}
-	}
-	_, _ = fmt.Fprintf(w, "%s\t%s\n", "github", ghStatus)
-	return w.Flush()
+	return client.ExportPubKeyToLocal(ctx, cfg.MasterFP)
 }
 
 func keysSSHPubKey(ctx context.Context, _ *cli.Command) error {
@@ -467,8 +355,8 @@ func keysConfigShow(ctx context.Context, _ *cli.Command) error {
 	fmt.Printf("master_fp: %s\n", cfg.MasterFP)
 	fmt.Printf("subkey_algo: %s\n", cfg.SubkeyAlgo)
 	fmt.Printf("subkey_expiry: %s\n", cfg.SubkeyExpiry)
-	for _, t := range cfg.PublishTargets {
-		fmt.Printf("publish_target: %s %s\n", t.Type, t.URL)
+	if len(cfg.PublishTargets) > 0 {
+		fmt.Println("publish_targets: (legacy, use 'server list' instead)")
 	}
 	return nil
 }

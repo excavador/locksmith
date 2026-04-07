@@ -96,8 +96,9 @@ func cardProvision(ctx context.Context, cmd *cli.Command) error {
 		return fmt.Errorf("provision: to-card: %w", err)
 	}
 
-	// Publish.
-	results := client.Publish(ctx, cfg.MasterFP, cfg.PublishTargets)
+	// Publish to enabled servers.
+	targets, _ := enabledPublishTargets(client)
+	results := client.Publish(ctx, cfg.MasterFP, targets)
 	logger := loggerFrom(ctx)
 	for _, r := range results {
 		if r.Err != nil {
@@ -134,19 +135,22 @@ func cardProvision(ctx context.Context, cmd *cli.Command) error {
 		mode = "unique-keys"
 	}
 
-	// Build subkey refs from keys now on the card (re-list after keytocard).
+	// Build subkey refs from the keys we just moved, using keyIDs from before
+	// MoveToCard rather than CardSerial matching (GPG may not have updated
+	// the card serial in its keyring yet).
+	movedSet := make(map[string]struct{}, len(keyIDs))
+	for _, id := range keyIDs {
+		movedSet[id] = struct{}{}
+	}
 	var subkeys []gpg.SubKeyRef
-	keys, listErr = client.ListSecretKeys(ctx)
-	if listErr == nil {
-		for i := range keys {
-			if keys[i].CardSerial == info.Serial {
-				subkeys = append(subkeys, gpg.SubKeyRef{
-					KeyID:   keys[i].KeyID,
-					Usage:   gpg.UsageLabel(keys[i].Usage),
-					Created: keys[i].Created,
-					Expires: keys[i].Expires,
-				})
-			}
+	for i := range keys {
+		if _, ok := movedSet[keys[i].KeyID]; ok {
+			subkeys = append(subkeys, gpg.SubKeyRef{
+				KeyID:   keys[i].KeyID,
+				Usage:   gpg.UsageLabel(keys[i].Usage),
+				Created: keys[i].Created,
+				Expires: keys[i].Expires,
+			})
 		}
 	}
 
@@ -236,8 +240,9 @@ func cardRotate(ctx context.Context, cmd *cli.Command) error {
 		return fmt.Errorf("rotate: to-card: %w", err)
 	}
 
-	// Publish.
-	results := client.Publish(ctx, cfg.MasterFP, cfg.PublishTargets)
+	// Publish to enabled servers.
+	rotateTargets, _ := enabledPublishTargets(client)
+	results := client.Publish(ctx, cfg.MasterFP, rotateTargets)
 	logger := loggerFrom(ctx)
 	for _, r := range results {
 		if r.Err != nil {
@@ -255,24 +260,27 @@ func cardRotate(ctx context.Context, cmd *cli.Command) error {
 		)
 	}
 
-	// Update inventory subkey refs with new keys on the card.
-	keys, listErr := client.ListSecretKeys(ctx)
-	if listErr == nil {
-		var newSubkeys []gpg.SubKeyRef
-		for i := range keys {
-			if keys[i].CardSerial == entry.Serial {
-				newSubkeys = append(newSubkeys, gpg.SubKeyRef{
-					KeyID:   keys[i].KeyID,
-					Usage:   gpg.UsageLabel(keys[i].Usage),
-					Created: keys[i].Created,
-					Expires: keys[i].Expires,
-				})
-			}
+	// Update inventory subkey refs with the keys we just moved.
+	// Use keyIDs from the generation step rather than CardSerial matching,
+	// because GPG may not have updated the card serial in its keyring yet.
+	movedSet := make(map[string]struct{}, len(keyIDs))
+	for _, id := range keyIDs {
+		movedSet[id] = struct{}{}
+	}
+	var newSubkeys []gpg.SubKeyRef
+	for i := range rotateKeys {
+		if _, ok := movedSet[rotateKeys[i].KeyID]; ok {
+			newSubkeys = append(newSubkeys, gpg.SubKeyRef{
+				KeyID:   rotateKeys[i].KeyID,
+				Usage:   gpg.UsageLabel(rotateKeys[i].Usage),
+				Created: rotateKeys[i].Created,
+				Expires: rotateKeys[i].Expires,
+			})
 		}
-		entry.Subkeys = newSubkeys
-		if err := client.SaveInventory(inv); err != nil {
-			return fmt.Errorf("rotate: save inventory: %w", err)
-		}
+	}
+	entry.Subkeys = newSubkeys
+	if err := client.SaveInventory(inv); err != nil {
+		return fmt.Errorf("rotate: save inventory: %w", err)
 	}
 
 	// Audit.
@@ -324,8 +332,9 @@ func cardRevoke(ctx context.Context, cmd *cli.Command) error {
 		return fmt.Errorf("card revoke: save inventory: %w", err)
 	}
 
-	// Publish revocation.
-	results := client.Publish(ctx, cfg.MasterFP, cfg.PublishTargets)
+	// Publish revocation to enabled servers.
+	revokeTargets, _ := enabledPublishTargets(client)
+	results := client.Publish(ctx, cfg.MasterFP, revokeTargets)
 	logger := loggerFrom(ctx)
 	for _, r := range results {
 		if r.Err != nil {
@@ -411,13 +420,13 @@ func cardDiscover(ctx context.Context, _ *cli.Command) error {
 		if entry.Model != "" && entry.Model != existing.Model &&
 			(existing.Model == "" || existing.Model == "Yubico YubiKey") {
 			existing.Model = entry.Model
-			if err := client.SaveInventory(inv); err != nil {
-				return fmt.Errorf("discover: save inventory: %w", err)
-			}
-			fmt.Fprintf(os.Stderr, "Already in inventory as %q (%s), updated model to %s\n", existing.Label, existing.Serial, entry.Model)
-		} else {
-			fmt.Fprintf(os.Stderr, "Already in inventory as %q (%s)\n", existing.Label, existing.Serial)
 		}
+		// Always sync subkey refs to match what's actually on the card.
+		existing.Subkeys = entry.Subkeys
+		if err := client.SaveInventory(inv); err != nil {
+			return fmt.Errorf("discover: save inventory: %w", err)
+		}
+		fmt.Fprintf(os.Stderr, "Already in inventory as %q (%s)\n", existing.Label, existing.Serial)
 		return nil
 	}
 

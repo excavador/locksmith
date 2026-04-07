@@ -21,9 +21,10 @@ const (
 	CardModeUniqueKeys CardMode = "unique-keys"
 )
 
-// MoveToCard transfers subkeys to the connected smart card using --edit-key keytocard.
+// MoveToCard transfers subkeys to the connected smart card using a single --edit-key session.
 // keyIDs specifies which subkeys to move (by long key ID). The correct gpg subkey index
 // and card slot are determined automatically from the keyring.
+// All subkeys are moved in one gpg process so the master key passphrase is requested only once.
 func (c *Client) MoveToCard(ctx context.Context, masterFP string, keyIDs []string) error {
 	if err := ValidateFingerprint(masterFP); err != nil {
 		return fmt.Errorf("move to card: %w", err)
@@ -51,6 +52,17 @@ func (c *Client) MoveToCard(ctx context.Context, masterFP string, keyIDs []strin
 		idxMap[keys[i].KeyID] = subkeyInfo{index: subkeyIdx, usage: keys[i].Usage}
 	}
 
+	// Build a single interactive command sequence for all subkeys.
+	// For each subkey: "key N" to select, "keytocard", slot number, "y" to confirm
+	// replacement if slot is occupied, then "key N" again to deselect (toggle off)
+	// before selecting the next one.
+	//
+	// NOTE: With --command-fd, GPG reads all interactive answers (including GET_BOOL
+	// prompts like "Replace existing key?") from stdin. The --yes flag does NOT
+	// auto-confirm when --command-fd is active. We must always provide "y" for the
+	// replacement prompt. If the slot is empty, the "y" is consumed harmlessly as
+	// an unknown edit-key command (GPG prints a warning and continues).
+	var cmds strings.Builder
 	for _, keyID := range keyIDs {
 		info, ok := idxMap[keyID]
 		if !ok {
@@ -65,25 +77,15 @@ func (c *Client) MoveToCard(ctx context.Context, masterFP string, keyIDs []strin
 			slog.Int("slot", slot),
 		)
 
-		if err := c.keytocardSingle(ctx, masterFP, info.index, slot); err != nil {
-			return fmt.Errorf("move subkey %s to card: %w", keyID, err)
-		}
+		fmt.Fprintf(&cmds, "key %d\nkeytocard\n%d\ny\nkey %d\n", info.index, slot, info.index)
 	}
-
-	return nil
-}
-
-// keytocardSingle moves a single subkey to the card via gpg --edit-key.
-// It uses --command-fd to feed interactive commands to gpg.
-func (c *Client) keytocardSingle(ctx context.Context, masterFP string, subkeyIdx int, slot int) error {
-	// Build the interactive command sequence:
-	// key N -> keytocard -> slot -> save
-	commands := fmt.Sprintf("key %d\nkeytocard\n%d\ny\nsave\n", subkeyIdx, slot)
+	cmds.WriteString("save\n")
 
 	args := []string{
 		"--homedir", c.homeDir,
 		"--command-fd", "0",
 		"--status-fd", "2",
+		"--yes",
 		"--no-tty",
 		"--edit-key", masterFP,
 	}
@@ -94,20 +96,55 @@ func (c *Client) keytocardSingle(ctx context.Context, masterFP string, subkeyIdx
 	)
 
 	cmd := exec.CommandContext(ctx, c.binary, args...) //nolint:gosec // binary path from user config
-	cmd.Stdin = strings.NewReader(commands)
+	cmd.Stdin = strings.NewReader(cmds.String())
 
 	var stderr bytes.Buffer
 	cmd.Stderr = &stderr
 
 	out, err := cmd.Output()
 	if err != nil {
-		// Log full output at debug level; only include truncated stderr in the error
-		// to avoid leaking key material from gpg's interactive output.
 		c.logger.DebugContext(ctx, "keytocard failed",
 			slog.String("stderr", stderr.String()),
 			slog.String("stdout", string(out)),
 		)
 		return fmt.Errorf("keytocard: %w\nstderr: %s", err, truncate(stderr.String(), 200))
+	}
+
+	// Verify that the card now holds the expected keys by checking fingerprints.
+	if verifyErr := c.verifyCardKeys(ctx, keys, keyIDs); verifyErr != nil {
+		return verifyErr
+	}
+
+	return nil
+}
+
+// verifyCardKeys checks that the card's key fingerprints match the moved subkeys.
+func (c *Client) verifyCardKeys(ctx context.Context, keys []SubKey, keyIDs []string) error {
+	info, err := c.CardStatus(ctx)
+	if err != nil {
+		return fmt.Errorf("move to card: verify: %w", err)
+	}
+
+	cardFPs := make(map[string]bool, len(info.KeyIDs))
+	for _, fp := range info.KeyIDs {
+		cardFPs[fp] = true
+	}
+
+	for _, keyID := range keyIDs {
+		// Find the fingerprint for this key ID.
+		var fp string
+		for i := range keys {
+			if keys[i].KeyID == keyID {
+				fp = keys[i].Fingerprint
+				break
+			}
+		}
+		if fp == "" {
+			continue // can't verify without fingerprint
+		}
+		if !cardFPs[fp] {
+			return fmt.Errorf("move to card: key %s was not written to card (card fingerprints do not match)", keyID)
+		}
 	}
 
 	return nil

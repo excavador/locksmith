@@ -300,7 +300,7 @@ No env vars for config — config files handle persistence, flags handle overrid
 
 Behavior:
 - If `gh` is not installed or not authenticated → skip GitHub, log warning with manual instructions
-- `keys publish --target keyserver` to publish to a specific target only
+- `server publish openpgp` to publish to a specific target by alias
 - On failure for any target, continue to next, report all results at the end
 
 ## SSH Public Key Export

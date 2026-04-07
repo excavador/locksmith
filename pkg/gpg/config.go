@@ -28,6 +28,11 @@ type (
 
 const (
 	configFilename = "gpgsmith.yaml"
+
+	// TargetTypeKeyserver is the publish target type for keyservers.
+	TargetTypeKeyserver = "keyserver"
+	// TargetTypeGitHub is the publish target type for GitHub.
+	TargetTypeGitHub = "github"
 )
 
 // LoadConfig reads the GPG config from GNUPGHOME/gpgsmith.yaml.
@@ -89,9 +94,9 @@ func (c *Client) AutoDiscoverConfig(ctx context.Context) (*Config, error) {
 		SubkeyAlgo:   "rsa4096",
 		SubkeyExpiry: "2y",
 		PublishTargets: []PublishTarget{
-			{Type: "keyserver", URL: "hkps://keys.openpgp.org"},
-			{Type: "keyserver", URL: "hkps://keyserver.ubuntu.com"},
-			{Type: "github"},
+			{Type: TargetTypeKeyserver, URL: "hkps://keys.openpgp.org"},
+			{Type: TargetTypeKeyserver, URL: "hkps://keyserver.ubuntu.com"},
+			{Type: TargetTypeGitHub},
 		},
 	}
 

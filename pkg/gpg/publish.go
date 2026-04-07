@@ -24,16 +24,6 @@ type (
 	}
 )
 
-var (
-	// WellKnownKeyservers is a list of popular keyservers for lookup.
-	WellKnownKeyservers = []string{
-		"hkps://keys.openpgp.org",
-		"hkps://keyserver.ubuntu.com",
-		"hkps://keys.mailvelope.com",
-		"hkps://pgp.mit.edu",
-	}
-)
-
 // Publish sends the public key to all configured publish targets.
 // It continues on failure, collecting results for each target.
 func (c *Client) Publish(ctx context.Context, masterFP string, targets []PublishTarget) []PublishResult {
@@ -46,9 +36,9 @@ func (c *Client) Publish(ctx context.Context, masterFP string, targets []Publish
 	for _, target := range targets {
 		var err error
 		switch target.Type {
-		case "keyserver":
+		case TargetTypeKeyserver:
 			err = c.publishToKeyserver(ctx, masterFP, target.URL)
-		case "github":
+		case TargetTypeGitHub:
 			err = c.publishToGitHub(ctx, masterFP)
 		default:
 			err = fmt.Errorf("unknown publish target type: %s", target.Type)
@@ -172,20 +162,90 @@ func (c *Client) publishToGitHub(ctx context.Context, masterFP string) error {
 		}
 	}
 
-	// Also upload SSH public key if an auth subkey exists.
-	sshPubkey, err := c.exec(ctx, "--export-ssh-key", masterFP)
-	if err != nil {
-		c.logger.DebugContext(ctx, "no SSH key to export for github", slog.String("error", err.Error()))
-		return nil // GPG key was uploaded, SSH is optional
+	// Upload SSH public key. Prefer the key from ssh-add -L (what the agent
+	// actually serves, especially when a smartcard is involved) over
+	// gpg --export-ssh-key (which reads from the keyring and can be stale).
+	sshTitle := "gpgsmith-" + masterFP[:16]
+	sshPubkey := c.getAgentSSHKey(ctx)
+	if sshPubkey == "" {
+		// Fall back to gpg export.
+		out, exportErr := c.exec(ctx, "--export-ssh-key", masterFP)
+		if exportErr != nil {
+			c.logger.DebugContext(ctx, "no SSH key to export for github", slog.String("error", exportErr.Error()))
+			return nil // GPG key was uploaded, SSH is optional
+		}
+		sshPubkey = strings.TrimSpace(string(out))
+	}
+	if sshPubkey == "" {
+		return nil
 	}
 
-	sshCmd := exec.CommandContext(ctx, ghPath, "ssh-key", "add", "-", "--title", "gpgsmith-"+masterFP[:16]) //nolint:gosec // ghPath from LookPath
-	sshCmd.Stdin = strings.NewReader(string(sshPubkey))
+	// Delete old SSH keys with the same title before adding.
+	if delErr := c.deleteGitHubSSHKeys(ctx, ghPath, sshTitle); delErr != nil {
+		c.logger.WarnContext(ctx, "could not clean old SSH keys from github",
+			slog.String("error", delErr.Error()),
+		)
+	}
+
+	sshCmd := exec.CommandContext(ctx, ghPath, "ssh-key", "add", "-", "--title", sshTitle) //nolint:gosec // ghPath from LookPath
+	sshCmd.Stdin = strings.NewReader(sshPubkey)
 
 	if out, err := sshCmd.CombinedOutput(); err != nil {
 		c.logger.WarnContext(ctx, "gh ssh-key add failed",
 			slog.String("output", strings.TrimSpace(string(out))),
 		)
+	}
+
+	return nil
+}
+
+// getAgentSSHKey returns the first SSH key from the running ssh-agent (via ssh-add -L).
+// Returns empty string if no agent or no keys.
+func (c *Client) getAgentSSHKey(ctx context.Context) string {
+	sshAddPath, err := exec.LookPath("ssh-add")
+	if err != nil {
+		return ""
+	}
+
+	out, err := exec.CommandContext(ctx, sshAddPath, "-L").Output() //nolint:gosec // sshAddPath from LookPath
+	if err != nil || len(out) == 0 {
+		return ""
+	}
+
+	// Return the first key line.
+	line := strings.SplitN(strings.TrimSpace(string(out)), "\n", 2)[0] //nolint:mnd // split into first + rest
+	if line == "" || strings.Contains(line, "no identities") {
+		return ""
+	}
+	return line
+}
+
+// deleteGitHubSSHKeys deletes all SSH keys on GitHub that match the given title.
+func (c *Client) deleteGitHubSSHKeys(ctx context.Context, ghPath string, title string) error {
+	// List SSH keys and find IDs matching our title.
+	listCmd := exec.CommandContext(ctx, ghPath, "api", "user/keys", "--paginate", "--jq", //nolint:gosec // ghPath from LookPath
+		fmt.Sprintf(`.[] | select(.title == %q) | .id`, title))
+	out, err := listCmd.Output()
+	if err != nil {
+		return fmt.Errorf("list ssh keys: %w", err)
+	}
+
+	ids := strings.TrimSpace(string(out))
+	if ids == "" {
+		return nil
+	}
+
+	for _, id := range strings.Split(ids, "\n") {
+		id = strings.TrimSpace(id)
+		if id == "" || !serialRe.MatchString(id) {
+			continue
+		}
+		delCmd := exec.CommandContext(ctx, ghPath, "api", "-X", "DELETE", //nolint:gosec // ghPath from LookPath
+			fmt.Sprintf("user/keys/%s", id))
+		if delOut, delErr := delCmd.CombinedOutput(); delErr != nil {
+			return fmt.Errorf("delete ssh key %s: %w\noutput: %s", id, delErr, strings.TrimSpace(string(delOut)))
+		}
+		c.logger.InfoContext(ctx, "deleted old SSH key from github", slog.String("id", id))
 	}
 
 	return nil

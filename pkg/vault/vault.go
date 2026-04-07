@@ -493,7 +493,7 @@ func untarToDir(r io.Reader, dir string) error {
 
 		switch header.Typeflag {
 		case tar.TypeDir:
-			if err := os.MkdirAll(target, mode); err != nil {
+			if err := os.MkdirAll(target, mode); err != nil { //nolint:gosec // target sanitized by path.Clean above
 				return fmt.Errorf("create dir %s: %w", header.Name, err)
 			}
 		case tar.TypeReg:
@@ -507,7 +507,7 @@ func untarToDir(r io.Reader, dir string) error {
 }
 
 func extractFile(target string, r io.Reader, mode os.FileMode, name string) error {
-	if err := os.MkdirAll(filepath.Dir(target), 0o700); err != nil {
+	if err := os.MkdirAll(filepath.Dir(target), 0o700); err != nil { //nolint:gosec // target sanitized by caller
 		return fmt.Errorf("create parent dir for %s: %w", name, err)
 	}
 
