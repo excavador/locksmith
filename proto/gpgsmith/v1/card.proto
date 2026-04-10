@@ -1,0 +1,77 @@
+syntax = "proto3";
+
+package gpgsmith.v1;
+
+import "gpgsmith/v1/common.proto";
+
+// CardService is the high-level YubiKey workflow surface. Each method runs
+// a multi-step operation under the hood (key generation, keytocard,
+// publish, ssh export, audit) and reports progress via the EventService
+// stream when invoked.
+service CardService {
+  // Provision generates fresh subkeys, moves them to the card, publishes
+  // the public key to enabled servers, and exports the SSH pubkey.
+  rpc Provision(ProvisionRequest) returns (ProvisionResponse);
+
+  // Rotate revokes the existing card subkeys, generates new ones, and
+  // moves them to the card.
+  rpc Rotate(RotateRequest) returns (RotateResponse);
+
+  // Revoke revokes all subkeys associated with a card and publishes the
+  // revocation.
+  rpc Revoke(RevokeCardRequest) returns (RevokeCardResponse);
+
+  // Inventory returns all known YubiKeys in the inventory file.
+  rpc Inventory(InventoryRequest) returns (InventoryResponse);
+
+  // Discover detects a connected card and adds it to the inventory.
+  rpc Discover(DiscoverRequest) returns (DiscoverResponse);
+}
+
+message ProvisionRequest {
+  string vault_name = 1;
+  string label = 2;
+  string description = 3;
+  bool same_keys = 4;
+  bool unique_keys = 5;
+}
+
+message ProvisionResponse {
+  CardInfo card = 1;
+  string ssh_pubkey_path = 2;
+}
+
+message RotateRequest {
+  string vault_name = 1;
+  string label = 2;
+}
+
+message RotateResponse {
+  CardInfo card = 1;
+}
+
+message RevokeCardRequest {
+  string vault_name = 1;
+  string label = 2;
+}
+
+message RevokeCardResponse {}
+
+message InventoryRequest {
+  string vault_name = 1;
+}
+
+message InventoryResponse {
+  repeated CardInfo cards = 1;
+}
+
+message DiscoverRequest {
+  string vault_name = 1;
+  string label = 2;
+  string description = 3;
+}
+
+message DiscoverResponse {
+  CardInfo card = 1;
+  bool already_in_inventory = 2;
+}

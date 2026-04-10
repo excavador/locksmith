@@ -1,0 +1,20 @@
+syntax = "proto3";
+
+package gpgsmith.v1;
+
+import "gpgsmith/v1/common.proto";
+
+// AuditService surfaces the append-only operation log stored inside the
+// vault (gpgsmith-audit.yaml).
+service AuditService {
+  rpc Show(ShowRequest) returns (ShowResponse);
+}
+
+message ShowRequest {
+  string vault_name = 1;
+  int32 last = 2; // optional limit; 0 = all
+}
+
+message ShowResponse {
+  repeated AuditEntry entries = 1;
+}

@@ -1,0 +1,95 @@
+syntax = "proto3";
+
+package gpgsmith.v1;
+
+import "gpgsmith/v1/common.proto";
+
+// KeyService exposes operations on the master key and its subkeys for an
+// already-open session. Every method takes a vault_name to identify which
+// open session to operate on (the daemon may have several).
+service KeyService {
+  // Create generates a brand-new master key and S/E/A subkeys.
+  rpc Create(CreateRequest) returns (CreateResponse);
+
+  // Generate adds a fresh batch of S/E/A subkeys under the existing master.
+  rpc Generate(GenerateRequest) returns (GenerateResponse);
+
+  // List returns all keys + subkeys with their card binding.
+  rpc List(ListKeysRequest) returns (ListKeysResponse);
+
+  // Revoke revokes a single subkey by key ID.
+  rpc Revoke(RevokeRequest) returns (RevokeResponse);
+
+  // Export copies the public key (and any card stubs) into the user's
+  // local ~/.gnupg keyring so it works outside the vault session.
+  rpc Export(ExportKeyRequest) returns (ExportKeyResponse);
+
+  // SSHPubKey writes the auth subkey out as an SSH public key file.
+  rpc SSHPubKey(SSHPubKeyRequest) returns (SSHPubKeyResponse);
+
+  // Status returns a snapshot of the keyring + connected card.
+  rpc Status(KeyStatusRequest) returns (KeyStatusResponse);
+}
+
+message CreateRequest {
+  string vault_name = 1;
+  string name = 2;            // real name for the UID
+  string email = 3;
+  string algo = 4;            // master key algo, e.g. "rsa4096"
+  string expiry = 5;          // master key expiry, e.g. "0" (no expiry)
+  string subkey_algo = 6;     // empty = same as master
+  string subkey_expiry = 7;
+}
+
+message CreateResponse {
+  string master_fp = 1;
+  repeated SubKey subkeys = 2;
+}
+
+message GenerateRequest {
+  string vault_name = 1;
+}
+
+message GenerateResponse {
+  repeated SubKey subkeys = 1;
+}
+
+message ListKeysRequest {
+  string vault_name = 1;
+}
+
+message ListKeysResponse {
+  repeated SubKey keys = 1;
+}
+
+message RevokeRequest {
+  string vault_name = 1;
+  string key_id = 2;
+}
+
+message RevokeResponse {}
+
+message ExportKeyRequest {
+  string vault_name = 1;
+}
+
+message ExportKeyResponse {
+  string target = 1;          // path the public key was exported to
+}
+
+message SSHPubKeyRequest {
+  string vault_name = 1;
+}
+
+message SSHPubKeyResponse {
+  string path = 1;            // path to the .pub file
+}
+
+message KeyStatusRequest {
+  string vault_name = 1;
+}
+
+message KeyStatusResponse {
+  repeated SubKey keys = 1;
+  CardInfo card = 2;          // empty if no card detected
+}

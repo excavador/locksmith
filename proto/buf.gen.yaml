@@ -1,0 +1,21 @@
+version: v2
+managed:
+  enabled: true
+  override:
+    - file_option: go_package_prefix
+      value: github.com/excavador/locksmith/pkg/gen
+plugins:
+  # Generates *.pb.go (message types) under pkg/gen/gpgsmith/v1/
+  # Plugin binary comes from devbox.json's `protoc-gen-go` package.
+  - local: protoc-gen-go
+    out: .
+    opt:
+      - paths=source_relative
+
+  # Generates *.connect.go (service interfaces, client constructors,
+  # handler factories) under pkg/gen/gpgsmith/v1/gpgsmithv1connect/
+  # Plugin binary comes from devbox.json's `protoc-gen-connect-go` package.
+  - local: protoc-gen-connect-go
+    out: .
+    opt:
+      - paths=source_relative

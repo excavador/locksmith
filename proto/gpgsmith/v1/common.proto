@@ -1,0 +1,128 @@
+// gpgsmith.v1 is the wire schema for the gpgsmith daemon's ConnectRPC API.
+// All hand-written code (CLI, web UI shim, TUI, daemon) speaks to the
+// daemon through types defined in this package, never through kernel types
+// directly.
+//
+// Stability: this is the first published version of the API. Once shipped
+// in a tagged release, message and method shapes are stable; new fields
+// may be added with new field numbers, never removed.
+
+syntax = "proto3";
+
+package gpgsmith.v1;
+
+import "google/protobuf/timestamp.proto";
+
+// LockSource identifies which gpgsmith frontend is talking to the daemon.
+// Used in session metadata so the user can see "this session is owned by
+// the web UI on hostX".
+enum LockSource {
+  LOCK_SOURCE_UNSPECIFIED = 0;
+  LOCK_SOURCE_CLI = 1;
+  LOCK_SOURCE_UI = 2;
+  LOCK_SOURCE_TUI = 3;
+}
+
+// SubKey describes a single GPG (sub)key — primary or secondary — as it
+// appears in the master key's keyring.
+message SubKey {
+  string key_id = 1;       // 16 hex chars
+  string fingerprint = 2;  // 40 hex chars
+  string algorithm = 3;    // "rsa", "ed25519", ...
+  string usage = 4;        // "C" for primary, "S"/"E"/"A" for subkeys
+  google.protobuf.Timestamp created = 5;
+  google.protobuf.Timestamp expires = 6; // optional; absent = no expiry
+  string card_serial = 7;  // non-empty if the key is on a YubiKey
+  string validity = 8;     // raw gpg validity letter ("u", "r", "e", ...)
+}
+
+// Identity is a name+email user ID attached to the master key.
+message Identity {
+  int32 index = 1;          // 1-based gpg index, useful for `keys identity revoke 2`
+  string validity = 2;      // raw validity letter
+  string status = 3;        // human-readable: "ultimate", "revoked", "expired", ...
+  google.protobuf.Timestamp created = 4;
+  google.protobuf.Timestamp revoked = 5;  // zero/absent unless revoked
+  string hash = 6;          // gpg's internal uid hash
+  string uid = 7;           // "Name <email@example.com>"
+}
+
+// Snapshot is one canonical age-encrypted snapshot in a vault directory.
+message Snapshot {
+  string path = 1;          // absolute path to the .tar.age file
+  string filename = 2;      // basename only
+  google.protobuf.Timestamp timestamp = 3;
+  string message = 4;       // human-supplied seal message
+}
+
+// CardInfo describes a YubiKey known to gpgsmith.
+message CardInfo {
+  string serial = 1;
+  string label = 2;
+  string model = 3;
+  string description = 4;
+  string provisioning = 5;  // "same-keys" / "unique-keys"
+  string status = 6;        // "active" / "revoked"
+  google.protobuf.Timestamp provisioned_at = 7;
+  repeated SubKeyRef subkeys = 8;
+}
+
+// SubKeyRef is a lightweight reference to a subkey held on a YubiKey.
+message SubKeyRef {
+  string key_id = 1;
+  string usage = 2;          // "sign" / "encrypt" / "auth"
+  google.protobuf.Timestamp created = 3;
+  google.protobuf.Timestamp expires = 4;
+}
+
+// PublishServer is one entry in the publish target registry.
+message PublishServer {
+  string alias = 1;
+  string type = 2;       // "keyserver" or "github"
+  string url = 3;        // empty for github
+  bool enabled = 4;
+}
+
+// AuditEntry is one line in the audit log.
+message AuditEntry {
+  google.protobuf.Timestamp timestamp = 1;
+  string action = 2;     // "create-key", "add-identity", "revoke-card", ...
+  string details = 3;    // free-form human-readable
+  map<string, string> metadata = 4;
+}
+
+// VaultRegistryEntry is one named vault from ~/.config/locksmith/config.yaml.
+message VaultRegistryEntry {
+  string name = 1;
+  string path = 2;
+  string identity_file = 3;        // optional age key file path
+  string gpg_binary = 4;           // optional gpg binary override
+  string trusted_master_fp = 5;    // TOFU anchor; empty until first use
+}
+
+// SessionInfo describes one session currently held by the daemon.
+message SessionInfo {
+  string vault_name = 1;
+  string vault_path = 2;
+  LockSource source = 3;
+  string hostname = 4;
+  google.protobuf.Timestamp started_at = 5;
+  google.protobuf.Timestamp last_active_at = 6;
+  string source_snapshot = 7;     // basename of the canonical it was opened from
+  string master_fp = 8;           // empty if no key generated yet
+  uint64 generation = 9;          // mutation counter
+  string status = 10;             // "active" / "idle-sealed"
+}
+
+// ResumeOption describes a recoverable .session-<host> ephemeral that the
+// daemon discovered when listing a vault. Returned to clients so they can
+// prompt the user to resume / discard / cancel.
+message ResumeOption {
+  string canonical_base = 1;
+  string hostname = 2;
+  LockSource source = 3;
+  google.protobuf.Timestamp started_at = 4;
+  google.protobuf.Timestamp last_heartbeat = 5;
+  string status = 6;
+  bool divergent = 7;             // true if a newer canonical exists than the one this was based on
+}

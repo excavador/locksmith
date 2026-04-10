@@ -1,0 +1,156 @@
+syntax = "proto3";
+
+package gpgsmith.v1;
+
+import "gpgsmith/v1/common.proto";
+
+// VaultService is the entry point for opening, sealing, and inspecting
+// vaults. Most session-bearing operations on this service either start a
+// new session or operate on an already-open one identified by name.
+service VaultService {
+  // List returns all configured vaults from the registry.
+  rpc List(ListRequest) returns (ListResponse);
+
+  // Status returns daemon-side state for vaults: which are currently open,
+  // which have a recoverable ephemeral, etc.
+  rpc Status(StatusVaultRequest) returns (StatusVaultResponse);
+
+  // Open asks the daemon to decrypt the latest canonical of the named
+  // vault, perform TOFU on the embedded master fingerprint, and start an
+  // in-memory Session. Returns the session info OR a ResumeAvailable
+  // result if a recoverable ephemeral is on disk.
+  rpc Open(OpenRequest) returns (OpenResponse);
+
+  // Resume continues a recoverable ephemeral session that Open just
+  // discovered. The client passes the same vault name and indicates
+  // resume vs discard.
+  rpc Resume(ResumeRequest) returns (ResumeResponse);
+
+  // Seal writes the workdir as a new canonical snapshot, removes the
+  // ephemeral file pair, and ends the session.
+  rpc Seal(SealRequest) returns (SealResponse);
+
+  // Discard throws away the workdir and ephemeral files without sealing.
+  rpc Discard(DiscardRequest) returns (DiscardResponse);
+
+  // Snapshots lists the canonical snapshots of a vault. Does NOT require
+  // the vault to be open.
+  rpc Snapshots(SnapshotsRequest) returns (SnapshotsResponse);
+
+  // Import takes an existing GNUPGHOME directory on disk and seals it as
+  // the first snapshot of a new vault.
+  rpc Import(ImportRequest) returns (ImportResponse);
+
+  // Export decrypts the latest canonical of the named vault to a target
+  // directory on disk. No session, no lock, no daemon-side state. The
+  // caller owns cleanup of the target directory. This is the escape hatch
+  // for advanced/recovery use.
+  rpc Export(ExportRequest) returns (ExportResponse);
+
+  // Trust replaces the trusted master fingerprint for a named vault. Used
+  // after a legitimate master-key rotation when the user has confirmed the
+  // new fingerprint out-of-band.
+  rpc Trust(TrustRequest) returns (TrustResponse);
+}
+
+message ListRequest {}
+
+message ListResponse {
+  repeated VaultRegistryEntry vaults = 1;
+  string default_vault = 2;
+}
+
+message StatusVaultRequest {}
+
+message StatusVaultResponse {
+  // open lists the vaults the daemon currently has decrypted in memory.
+  repeated SessionInfo open = 1;
+
+  // recoverable lists vaults that have a .session-<host> ephemeral on disk
+  // ready to be resumed.
+  repeated ResumeOption recoverable = 2;
+}
+
+message OpenRequest {
+  string vault_name = 1;
+  string passphrase = 2;
+  LockSource source = 3;
+}
+
+message OpenResponse {
+  // session is set when the open succeeded with no resume question.
+  SessionInfo session = 1;
+
+  // resume_available is set when an existing .session-<host> ephemeral was
+  // found and the daemon needs the client to choose resume / discard /
+  // cancel via Resume().
+  ResumeOption resume_available = 2;
+}
+
+message ResumeRequest {
+  string vault_name = 1;
+  string passphrase = 2;
+  LockSource source = 3;
+
+  enum Action {
+    ACTION_UNSPECIFIED = 0;
+    ACTION_RESUME = 1;
+    ACTION_DISCARD = 2;
+  }
+  Action action = 4;
+}
+
+message ResumeResponse {
+  SessionInfo session = 1;
+}
+
+message SealRequest {
+  string vault_name = 1;
+  string message = 2;
+}
+
+message SealResponse {
+  Snapshot snapshot = 1;
+}
+
+message DiscardRequest {
+  string vault_name = 1;
+}
+
+message DiscardResponse {}
+
+message SnapshotsRequest {
+  string vault_name = 1;
+}
+
+message SnapshotsResponse {
+  repeated Snapshot snapshots = 1;
+}
+
+message ImportRequest {
+  string source_path = 1;       // a local directory containing a GNUPGHOME
+  string passphrase = 2;
+  string target_vault_name = 3; // optional; if empty, the user must seal manually
+}
+
+message ImportResponse {
+  Snapshot snapshot = 1;
+}
+
+message ExportRequest {
+  string vault_name = 1;
+  string passphrase = 2;
+  string target_dir = 3;        // user-supplied destination
+}
+
+message ExportResponse {
+  string target_dir = 1;
+  string snapshot = 2;          // basename of the snapshot that was decrypted
+}
+
+message TrustRequest {
+  string vault_name = 1;
+  string fingerprint = 2;       // 40 hex chars; replaces existing trust anchor
+}
+
+message TrustResponse {}

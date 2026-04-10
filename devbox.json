@@ -4,7 +4,10 @@
     "go@latest",
     "just@latest",
     "goreleaser@latest",
-    "golangci-lint@2.10.1"
+    "golangci-lint@2.10.1",
+    "buf@latest",
+    "protoc-gen-go@latest",
+    "protoc-gen-connect-go@latest"
   ],
   "shell": {
     "init_hook": [

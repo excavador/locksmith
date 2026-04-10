@@ -1,0 +1,23 @@
+version: v2
+modules:
+  - path: .
+lint:
+  use:
+    - STANDARD
+  except:
+    # Allow unversioned package names like gpgsmith.v1 instead of forcing
+    # full module path style.
+    - PACKAGE_DIRECTORY_MATCH
+
+    # We use descriptive request/response message names (e.g.
+    # ListIdentitiesRequest, AddIdentityRequest) instead of the bare-name
+    # convention (ListRequest, AddRequest) that buf's STANDARD lint
+    # prefers. Multiple services in this package have methods like List
+    # and Add, and the bare-name form would either collide or force a
+    # verbose ServicePrefix form. Descriptive names read more clearly
+    # at call sites and in generated Go code.
+    - RPC_REQUEST_STANDARD_NAME
+    - RPC_RESPONSE_STANDARD_NAME
+breaking:
+  use:
+    - FILE

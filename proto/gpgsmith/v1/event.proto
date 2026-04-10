@@ -1,0 +1,42 @@
+syntax = "proto3";
+
+package gpgsmith.v1;
+
+import "google/protobuf/timestamp.proto";
+
+// EventService is the daemon's pub/sub stream for long-running operations
+// and session lifecycle changes. Frontends (CLI in --json mode, web UI via
+// SSE, TUI as tea.Msg) all subscribe to this and translate events into
+// their own progress UX.
+service EventService {
+  // Subscribe opens a server-streaming RPC. The daemon emits events for
+  // the requested vault until the client disconnects. If vault_name is
+  // empty, the daemon emits events for ALL vaults the caller has access
+  // to (currently: all of them).
+  rpc Subscribe(SubscribeRequest) returns (stream Event);
+}
+
+message SubscribeRequest {
+  string vault_name = 1; // empty = all
+}
+
+// Event is one item in the daemon's pub/sub stream.
+message Event {
+  google.protobuf.Timestamp timestamp = 1;
+  string vault_name = 2;
+  string job_id = 3;     // empty for non-job events
+  EventKind kind = 4;
+  string message = 5;
+  map<string, string> data = 6;
+}
+
+enum EventKind {
+  EVENT_KIND_UNSPECIFIED = 0;
+  EVENT_KIND_JOB_STARTED = 1;
+  EVENT_KIND_JOB_PROGRESS = 2;
+  EVENT_KIND_JOB_PROMPT = 3;        // daemon needs user input (e.g., "touch your YubiKey")
+  EVENT_KIND_JOB_COMPLETED = 4;
+  EVENT_KIND_JOB_FAILED = 5;
+  EVENT_KIND_STATE_CHANGED = 6;     // a vault's session state changed (open/seal/discard)
+  EVENT_KIND_SESSION_ENDED = 7;
+}

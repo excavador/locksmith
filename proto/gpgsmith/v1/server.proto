@@ -1,0 +1,99 @@
+syntax = "proto3";
+
+package gpgsmith.v1;
+
+import "gpgsmith/v1/common.proto";
+
+// ServerService manages the publish-target registry stored inside the
+// vault (gpgsmith-servers.yaml). Servers are external entities — keyservers
+// and GitHub — that public keys can be published to.
+service ServerService {
+  // List returns all configured publish targets.
+  rpc List(ListServersRequest) returns (ListServersResponse);
+
+  // Add registers a new keyserver alias.
+  rpc Add(AddServerRequest) returns (AddServerResponse);
+
+  // Remove deletes an alias from the registry.
+  rpc Remove(RemoveServerRequest) returns (RemoveServerResponse);
+
+  // Enable marks a server as enabled for publish operations. For GitHub,
+  // this also validates that the gh CLI is authenticated with the correct
+  // OAuth scopes.
+  rpc Enable(EnableServerRequest) returns (EnableServerResponse);
+
+  // Disable marks a server as disabled.
+  rpc Disable(DisableServerRequest) returns (DisableServerResponse);
+
+  // Publish sends the public key to enabled servers (or specific aliases
+  // if provided). Reports per-target results.
+  rpc Publish(PublishRequest) returns (PublishResponse);
+
+  // Lookup checks which servers currently hold the public key.
+  rpc Lookup(LookupRequest) returns (LookupResponse);
+}
+
+message ListServersRequest {
+  string vault_name = 1;
+}
+
+message ListServersResponse {
+  repeated PublishServer servers = 1;
+}
+
+message AddServerRequest {
+  string vault_name = 1;
+  string alias = 2;
+  string url = 3;
+}
+
+message AddServerResponse {}
+
+message RemoveServerRequest {
+  string vault_name = 1;
+  string alias = 2;
+}
+
+message RemoveServerResponse {}
+
+message EnableServerRequest {
+  string vault_name = 1;
+  string alias = 2;
+}
+
+message EnableServerResponse {}
+
+message DisableServerRequest {
+  string vault_name = 1;
+  string alias = 2;
+}
+
+message DisableServerResponse {}
+
+message PublishRequest {
+  string vault_name = 1;
+  repeated string aliases = 2; // empty = all enabled
+}
+
+message PublishResponse {
+  repeated PublishResult results = 1;
+}
+
+message PublishResult {
+  string alias = 1;
+  bool success = 2;
+  string error = 3; // empty when success
+}
+
+message LookupRequest {
+  string vault_name = 1;
+}
+
+message LookupResponse {
+  repeated LookupResult results = 1;
+}
+
+message LookupResult {
+  string url = 1;
+  string status = 2; // "found" / "not found" / "timeout" / "error: ..."
+}

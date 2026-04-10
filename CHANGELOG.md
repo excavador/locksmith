@@ -4,6 +4,48 @@
 
 ### Added
 
+- **Protobuf schema and ConnectRPC code generation foundation** for the
+  upcoming gpgsmith daemon. The wire format is the dedicated package
+  `gpgsmith.v1` defined under `proto/gpgsmith/v1/`. Eight services cover
+  the full kernel surface: `DaemonService` (status, shutdown, list
+  sessions), `VaultService` (list, status, open, resume, seal, discard,
+  snapshots, import, export, trust), `KeyService` (create, generate,
+  list, revoke, export, ssh-pubkey, status), `IdentityService` (list,
+  add, revoke, primary), `CardService` (provision, rotate, revoke,
+  inventory, discover), `ServerService` (publish-target registry +
+  publish + lookup), `AuditService` (show), and `EventService`
+  (server-streaming pub/sub for job progress and "touch your YubiKey"
+  prompts).
+
+  Tooling:
+
+  - `devbox.json` adds `buf`, `protoc-gen-go`, and `protoc-gen-connect-go`
+    so contributors get the toolchain via `direnv allow` with no manual
+    install steps.
+  - `proto/buf.yaml` configures the buf module with the STANDARD lint
+    rules (with two stylistic naming exceptions documented inline) plus
+    file-level breaking-change checks.
+  - `proto/buf.gen.yaml` (v2 schema) drives codegen via the local
+    `protoc-gen-go` and `protoc-gen-connect-go` plugins delivered by
+    devbox. Output goes to `pkg/gen/gpgsmith/v1/` (message types) and
+    `pkg/gen/gpgsmith/v1/gpgsmithv1connect/` (service interfaces, client
+    constructors, handler factories).
+  - `pkg/gen/gen.go` holds the `//go:generate buf generate ...` directive
+    so `go generate ./pkg/gen` regenerates everything.
+  - **Generated code is committed to git** so `go install`, CI, and
+    contributors who only touch Go do not need buf.
+  - `just generate` regenerates the wire schema.
+  - `just lint-proto` runs `buf lint`, separate from `just lint` so a
+    misformatted .proto file does not break the Go developer feedback loop.
+  - `just generate-check` is a CI helper that runs `just generate` and
+    fails if the working tree is dirty afterwards (catches missing
+    regeneration after .proto edits).
+
+  No new functionality or behavior change in this commit — purely setting
+  up the wire format. The kernel API and existing CLI are untouched.
+  The schema and generated stubs become callable in the next commit when
+  the daemon and the `pkg/rpc` adapter package land.
+
 - **Vault registry: multi-vault support in `~/.config/locksmith/config.yaml`.**
   The config file now supports a `vaults:` list with named entries plus a
   `default:` selector, alongside the existing single-vault `vault_dir:` form.

@@ -1,0 +1,47 @@
+syntax = "proto3";
+
+package gpgsmith.v1;
+
+import "google/protobuf/timestamp.proto";
+import "gpgsmith/v1/common.proto";
+
+// DaemonService exposes daemon-level controls (status, shutdown, listing of
+// active sessions). It does not handle vault content directly.
+service DaemonService {
+  // Status returns daemon-level metadata: pid, version, socket path, uptime.
+  rpc Status(StatusRequest) returns (StatusResponse);
+
+  // Shutdown asks the daemon to seal/discard all sessions and exit. Honors
+  // a graceful timeout; if the timeout elapses, in-flight sessions are
+  // auto-sealed (their workdir is flushed to .session-<host> ephemerals)
+  // and the daemon dies.
+  rpc Shutdown(ShutdownRequest) returns (ShutdownResponse);
+
+  // ListSessions returns the daemon's currently open sessions.
+  rpc ListSessions(ListSessionsRequest) returns (ListSessionsResponse);
+}
+
+message StatusRequest {}
+
+message StatusResponse {
+  int32 pid = 1;
+  string version = 2;
+  string commit = 3;
+  string socket_path = 4;
+  google.protobuf.Timestamp started_at = 5;
+  int32 active_sessions = 6;
+}
+
+message ShutdownRequest {
+  // GracefulTimeoutSeconds caps how long the daemon will wait for graceful
+  // session cleanup before forcing exit. Zero means use the daemon default.
+  int32 graceful_timeout_seconds = 1;
+}
+
+message ShutdownResponse {}
+
+message ListSessionsRequest {}
+
+message ListSessionsResponse {
+  repeated SessionInfo sessions = 1;
+}
