@@ -43,6 +43,50 @@
   legacy + registry forms with backward-compatible precedence. Tests cover
   every resolution path.
 
+- **Ephemeral session file convention** in `pkg/gpgsmith`. Defines and implements
+  the on-disk shape of "session in progress" markers that the daemon will
+  write into the vault directory alongside canonical snapshots:
+
+  ```
+  <vault-dir>/20260410T143012Z_setup.tar.age                                 ← canonical (immutable)
+  <vault-dir>/20260410T143012Z_setup.tar.age.session-laptop.local            ← in-progress encrypted state
+  <vault-dir>/20260410T143012Z_setup.tar.age.session-laptop.local.info       ← liveness sidecar (plaintext)
+  ```
+
+  The base canonical filename is preserved in the suffix so the parent
+  relationship is visible at a glance, and **divergence detection becomes a
+  filename comparison**: if a session file references canonical X but a newer
+  canonical Y is in the same directory, the user has changes from another
+  machine that the in-progress session does not include.
+
+  The hostname suffix lets multiple machines (in a Dropbox/Syncthing-synced
+  vault directory) coexist without colliding on filenames. Each machine has
+  at most one in-progress session per vault, named after its own hostname.
+
+  `pkg/gpgsmith/ephemeral.go` provides:
+
+  - `SessionFilenamesFor(canonical, hostname)` — derive both filenames
+  - `ParseSessionFilename(name)` — split a name back into canonical + hostname
+  - `WriteEphemeralInfo` / `ReadEphemeralInfo` — atomic YAML read/write
+    for the `.info` sidecar (temp file + rename)
+  - `EphemeralInfo.IsStale(now)` — heartbeat-timestamp staleness check
+    (`StaleHeartbeatThreshold` = 90 seconds, generously larger than the
+    `HeartbeatInterval` = 30 seconds to tolerate sync delay)
+  - `ListEphemerals(vaultDir)` — find every `.session-<host>.info` in a
+    vault dir, parse each, return sorted by hostname; junk and unparseable
+    files are silently skipped
+  - `FindEphemeralFor(vaultDir, hostname)` — lookup by hostname
+  - `Ephemeral.IsDivergent(canonicalNames)` — compare canonical base
+    against the dir's canonical list, true if a newer one exists
+  - `DeleteEphemeralFiles` — idempotent cleanup of the file pair
+
+  11 unit tests covering filename round-trip, parser edge cases, atomic
+  write, mode-0600 permissions, multi-host listing, junk filtering,
+  staleness detection (including clock-skew futures), divergence detection
+  (no-other / older-only / newer-present / missing-canonical cases),
+  and idempotent deletion. Not yet wired into a Session type — that lands
+  in the next commit.
+
 - **New kernel package `pkg/gpgsmith` with vault lock primitive**
   (`AcquireVaultLock`, `Lock.Release`, `LockContentionError`,
   `ReadLockInfoFor`, `ForceUnlockVault`). Uses `flock(2)` so the kernel

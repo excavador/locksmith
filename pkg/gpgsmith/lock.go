@@ -62,9 +62,6 @@ const (
 	LockSourceUI LockSource = "ui"
 	// LockSourceTUI marks a lock acquired by the terminal UI (future).
 	LockSourceTUI LockSource = "tui"
-
-	// infoSuffix is the filename extension for the sidecar lock info file.
-	infoSuffix = ".info"
 )
 
 // AcquireVaultLock attempts to take an exclusive non-blocking flock(2) on a
