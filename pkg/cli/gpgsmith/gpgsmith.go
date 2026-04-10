@@ -71,6 +71,7 @@ func Main(version, commit, date string) int {
 			cardCmd(),
 			serverCmd(),
 			auditCmd(),
+			daemonCmd(version, commit, date),
 			{
 				Name:  "version",
 				Usage: "show version information",
