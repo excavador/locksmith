@@ -4,6 +4,50 @@
 
 ### Added
 
+- **`pkg/wire` ConnectRPC adapter layer.** The hand-written ConnectRPC
+  layer that wraps the generated stubs from `pkg/gen` and adapts them
+  to the kernel API: server handlers (one per service), a typed client
+  wrapper that bundles all eight service clients, and a proto↔kernel
+  type-conversion layer. The package is named `wire` rather than `rpc`
+  because Go's standard library already has `net/rpc` and golangci-lint's
+  revive var-naming rule flags the shadowed name; the new name also
+  clearly conveys "this is the wire format / wire protocol layer".
+
+  - `Backend` interface — the contract that handlers call into. Exposes
+    the gpgsmith kernel surface in a session-aware, daemon-style API
+    where every session-bearing method takes a vault name. Implemented
+    by the daemon (forthcoming).
+  - One handler file per service (`handlers_daemon.go`,
+    `handlers_vault.go`, `handlers_key.go`, `handlers_identity.go`,
+    `handlers_card.go`, `handlers_server.go`, `handlers_audit.go`,
+    `handlers_event.go`). Each handler embeds the corresponding
+    `Unimplemented*ServiceHandler` from the generated package and
+    delegates to a `Backend` method, translating proto types in/out via
+    `mapping.go`.
+  - `mapping.go` — proto↔kernel type converters. The only place in the
+    codebase where protobuf types appear in hand-written code; the rest
+    of the codebase sees only kernel-shaped Go values.
+  - `errors.go` — translates kernel errors into Connect-coded errors:
+    `MasterKeyMismatchError` → `CodeFailedPrecondition`,
+    `LockContentionError` → `CodeAlreadyExists`,
+    `context.Canceled` → `CodeCanceled`, everything else → `CodeInternal`.
+  - `Server` — bundles all handlers into a single `http.Handler` that
+    the daemon mounts on its Unix socket.
+  - `Client` — typed client wrapper that bundles all eight generated
+    `*ServiceClient` interfaces. Constructors:
+    `NewUnixSocketClient(path)` for the production daemon connection
+    and `NewHTTPClient(client, baseURL)` for tests using
+    `httptest.Server`.
+  - Seven round-trip tests using an in-process Connect server with a
+    fake `Backend`: daemon status, identity list (with revoked UID),
+    identity add, backend error propagation as Connect codes,
+    Unix-socket client construction, server handler construction, and
+    HTTP routing.
+
+  Not yet wired into a real daemon process — `pkg/daemon` is the next
+  commit. The wire layer is complete and tested in isolation against
+  the fake backend.
+
 - **Protobuf schema and ConnectRPC code generation foundation** for the
   upcoming gpgsmith daemon. The wire format is the dedicated package
   `gpgsmith.v1` defined under `proto/gpgsmith/v1/`. Eight services cover
