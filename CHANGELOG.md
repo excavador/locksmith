@@ -43,6 +43,23 @@
   legacy + registry forms with backward-compatible precedence. Tests cover
   every resolution path.
 
+- **New kernel package `pkg/gpgsmith` with vault lock primitive**
+  (`AcquireVaultLock`, `Lock.Release`, `LockContentionError`,
+  `ReadLockInfoFor`, `ForceUnlockVault`). Uses `flock(2)` so the kernel
+  automatically releases the lock when the holding process dies (even on
+  `SIGKILL`) — no stale-PID-file cleanup. A sidecar `.info` YAML file
+  records the holder's PID, source (`cli` / `ui` / `tui`), start time, and
+  hostname for diagnostic messages on contention. Lock files live under
+  `${XDG_RUNTIME_DIR}/gpgsmith/locks` on Linux and `${TMPDIR}/gpgsmith/locks`
+  on macOS, named by the SHA-256 of the absolute vault path so different
+  vaults at different paths get distinct locks. **Per-host only** — file-sync
+  setups (Dropbox, Syncthing) cannot be coordinated by this mechanism.
+  Eight unit tests cover acquire, release, contention, double-release,
+  re-acquire after release, distinct-vault independence, path-canonicalization
+  (a relative path contends with the same vault opened by absolute path),
+  force-unlock, and a subprocess test that proves kernel auto-release on
+  process exit. Not yet wired into the CLI; that lands in the next commit.
+
 ## v0.3.0 - 2026-04-10
 
 ### Added
