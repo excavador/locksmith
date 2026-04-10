@@ -4,7 +4,7 @@ package main
 import (
 	"os"
 
-	gpgsmith "github.com/excavador/locksmith/pkg/gpgsmith"
+	gpgsmith "github.com/excavador/locksmith/pkg/cli/gpgsmith"
 )
 
 var (

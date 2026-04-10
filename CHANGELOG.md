@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+### Changed (internal, no user-visible behavior change)
+
+- **CLI implementation moved from `pkg/gpgsmith` to `pkg/cli/gpgsmith`** to free
+  up `pkg/gpgsmith` for the upcoming kernel package. The new layout is:
+  `pkg/gpg`, `pkg/vault`, `pkg/audit` (primitives) → `pkg/gpgsmith` (kernel,
+  forthcoming) → `pkg/cli/gpgsmith` (CLI frontend). Future siblings:
+  `pkg/cli/pkismith` (when pkismith ships), `pkg/webui/gpgsmith`,
+  `pkg/tui/gpgsmith`. Pure mechanical rename — no behavior change.
+
 ## v0.3.0 - 2026-04-10
 
 ### Added
