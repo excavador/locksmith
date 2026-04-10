@@ -405,6 +405,14 @@ func (v *Vault) sealDir(ctx context.Context, dir string, message string) (Snapsh
 	}, nil
 }
 
+// DecryptFile decrypts an arbitrary .tar.age file (typically a
+// .session-<host> ephemeral) into a fresh secure workdir and returns its
+// path. The file must have been encrypted with this vault's identity. The
+// returned workdir is the caller's to manage (Discard or Seal).
+func (v *Vault) DecryptFile(_ context.Context, path string) (string, error) {
+	return v.decryptSnapshot(path)
+}
+
 // decryptSnapshot decrypts a .tar.age file into a secure tmpdir.
 func (v *Vault) decryptSnapshot(path string) (string, error) {
 	if v.identity == nil {
