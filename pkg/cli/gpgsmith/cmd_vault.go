@@ -106,23 +106,44 @@ func loadVaultFirstUse(ctx context.Context, cmd *cli.Command) (*vault.Vault, err
 	return loadVaultWithOpts(ctx, cmd, true)
 }
 
+// resolveVaultEntry returns the vault entry the user has selected via flags
+// and config. Resolution order:
+//
+//  1. --vault-dir <path>: synthetic entry, registry ignored. Useful for tests
+//     and one-off scripted runs.
+//  2. --vault <name>: look up the named entry in the registry.
+//  3. neither: use the configured default (or the legacy single-vault entry).
+func resolveVaultEntry(cmd *cli.Command) (*vault.Entry, error) {
+	if vaultDir := cmd.Root().String("vault-dir"); vaultDir != "" {
+		return &vault.Entry{
+			Name: "(--vault-dir)",
+			Path: vaultDir,
+		}, nil
+	}
+
+	cfg, err := vault.LoadConfig("")
+	if err != nil {
+		return nil, fmt.Errorf("load vault config: %w (use --vault-dir or create config)", err)
+	}
+
+	name := cmd.Root().String("vault")
+	entry, err := cfg.Resolve(name)
+	if err != nil {
+		return nil, fmt.Errorf("resolve vault: %w", err)
+	}
+	return entry, nil
+}
+
 func loadVaultWithOpts(ctx context.Context, cmd *cli.Command, confirmPassphrase bool) (*vault.Vault, error) {
 	logger := loggerFrom(ctx)
 
-	var cfg *vault.Config
-
-	vaultDir := cmd.Root().String("vault-dir")
-	if vaultDir != "" {
-		cfg = &vault.Config{VaultDir: vaultDir}
-	} else {
-		var err error
-		cfg, err = vault.LoadConfig("")
-		if err != nil {
-			return nil, fmt.Errorf("load vault config: %w (use --vault-dir or create config)", err)
-		}
+	entry, err := resolveVaultEntry(cmd)
+	if err != nil {
+		return nil, err
 	}
+	cfg := entry.ToConfig()
 
-	// If identity file is configured, use key-file mode.
+	// If an age key file is configured, use key-file mode.
 	if cfg.Identity != "" {
 		return vault.New(cfg, logger)
 	}
@@ -130,7 +151,6 @@ func loadVaultWithOpts(ctx context.Context, cmd *cli.Command, confirmPassphrase 
 	// Check GPGSMITH_VAULT_KEY env var before prompting.
 	passphrase := os.Getenv("GPGSMITH_VAULT_KEY")
 	if passphrase == "" {
-		var err error
 		if confirmPassphrase {
 			passphrase, err = readPassphraseWithConfirm()
 		} else {
@@ -184,6 +204,48 @@ func confirmPassphrases(readFn func(string) (string, error)) (string, error) {
 	return pass, nil
 }
 
+// chooseCreateDir picks the directory for `vault create`. Resolution order:
+//
+//  1. --vault-dir <path>
+//  2. --vault <name> -> registry lookup
+//  3. existing config's default-resolved entry path
+//  4. ~/Dropbox/Private/vault (legacy default for first-time setup)
+func chooseCreateDir(ctx context.Context, cmd *cli.Command, logger *slog.Logger) (string, error) {
+	if dir := cmd.Root().String("vault-dir"); dir != "" {
+		return dir, nil
+	}
+
+	if cfg, err := vault.LoadConfig(""); err == nil {
+		if entry, resErr := cfg.Resolve(cmd.Root().String("vault")); resErr == nil {
+			return entry.Path, nil
+		}
+	}
+
+	if name := cmd.Root().String("vault"); name != "" {
+		return "", fmt.Errorf("vault create: %q not found in registry; add it to ~/.config/locksmith/config.yaml or use --vault-dir", name)
+	}
+
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return "", fmt.Errorf("determine home directory: %w", err)
+	}
+	dir := filepath.Join(home, "Dropbox", "Private", "vault")
+	logger.InfoContext(ctx, "no vault dir specified, using default",
+		slog.String("dir", dir),
+	)
+	return dir, nil
+}
+
+// ensureConfigForCreate writes a minimal first-run config when none exists.
+// If a config is already present (legacy or registry form), it is left
+// untouched so we don't clobber the user's vault registry.
+func ensureConfigForCreate(vaultDir string) error {
+	if _, err := vault.LoadConfig(""); err == nil {
+		return nil
+	}
+	return vault.SaveConfig("", &vault.Config{VaultDir: vaultDir})
+}
+
 func vaultCreate(ctx context.Context, cmd *cli.Command) error {
 	if os.Getenv("GPGSMITH_SESSION") == "1" {
 		return fmt.Errorf("already in a gpgsmith session, exit first")
@@ -191,26 +253,9 @@ func vaultCreate(ctx context.Context, cmd *cli.Command) error {
 
 	logger := loggerFrom(ctx)
 
-	vaultDir := cmd.Root().String("vault-dir")
-
-	// If no --vault-dir, try loading from existing config.
-	if vaultDir == "" {
-		cfg, err := vault.LoadConfig("")
-		if err == nil {
-			vaultDir = cfg.VaultDir
-		}
-	}
-
-	// If still no vault dir, use a sensible default.
-	if vaultDir == "" {
-		home, err := os.UserHomeDir()
-		if err != nil {
-			return fmt.Errorf("determine home directory: %w", err)
-		}
-		vaultDir = filepath.Join(home, "Dropbox", "Private", "vault")
-		logger.InfoContext(ctx, "no vault dir specified, using default",
-			slog.String("dir", vaultDir),
-		)
+	vaultDir, err := chooseCreateDir(ctx, cmd, logger)
+	if err != nil {
+		return err
 	}
 
 	// Create the vault directory.
@@ -221,9 +266,10 @@ func vaultCreate(ctx context.Context, cmd *cli.Command) error {
 		slog.String("dir", vaultDir),
 	)
 
-	// Save config so future commands and loadVaultFirstUse work without --vault-dir.
-	cfg := &vault.Config{VaultDir: vaultDir}
-	if err := vault.SaveConfig("", cfg); err != nil {
+	// Persist a minimal config so future commands work without --vault-dir.
+	// We only write a brand-new config when one does not already exist;
+	// otherwise we leave the user's registry alone.
+	if err := ensureConfigForCreate(vaultDir); err != nil {
 		return err
 	}
 
@@ -487,15 +533,38 @@ func vaultRestore(ctx context.Context, cmd *cli.Command) error {
 	return startSession(ctx, v, workdir, cmd, logger)
 }
 
-func vaultConfigShow(ctx context.Context, _ *cli.Command) error {
+func vaultConfigShow(_ context.Context, _ *cli.Command) error {
 	cfg, err := vault.LoadConfig("")
 	if err != nil {
 		return err
 	}
-	_ = ctx
-	fmt.Printf("vault_dir: %s\n", cfg.VaultDir)
-	fmt.Printf("identity: %s\n", cfg.Identity)
-	fmt.Printf("gpg_binary: %s\n", cfg.GPGBinary)
+
+	if cfg.VaultDir != "" {
+		fmt.Printf("vault_dir: %s\n", cfg.VaultDir)
+	}
+	if cfg.Identity != "" {
+		fmt.Printf("identity: %s\n", cfg.Identity)
+	}
+	if cfg.GPGBinary != "" {
+		fmt.Printf("gpg_binary: %s\n", cfg.GPGBinary)
+	}
+	if cfg.Default != "" {
+		fmt.Printf("default: %s\n", cfg.Default)
+	}
+	if len(cfg.Vaults) > 0 {
+		fmt.Println("vaults:")
+		for i := range cfg.Vaults {
+			e := &cfg.Vaults[i]
+			fmt.Printf("  - name: %s\n", e.Name)
+			fmt.Printf("    path: %s\n", e.Path)
+			if e.Identity != "" {
+				fmt.Printf("    identity: %s\n", e.Identity)
+			}
+			if e.GPGBinary != "" {
+				fmt.Printf("    gpg_binary: %s\n", e.GPGBinary)
+			}
+		}
+	}
 	return nil
 }
 

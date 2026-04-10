@@ -47,7 +47,11 @@ func Main(version, commit, date string) int {
 			},
 			&cli.StringFlag{
 				Name:  "vault-dir",
-				Usage: "override vault directory",
+				Usage: "override vault directory (ignores the registry; useful for tests)",
+			},
+			&cli.StringFlag{
+				Name:  "vault",
+				Usage: "select a vault by name from the registry (default: the configured default)",
 			},
 		},
 		Before: func(ctx context.Context, _ *cli.Command) (context.Context, error) {

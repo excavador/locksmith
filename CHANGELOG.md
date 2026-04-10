@@ -2,6 +2,33 @@
 
 ## Unreleased
 
+### Added
+
+- **Vault registry: multi-vault support in `~/.config/locksmith/config.yaml`.**
+  The config file now supports a `vaults:` list with named entries plus a
+  `default:` selector, alongside the existing single-vault `vault_dir:` form.
+  Both forms remain valid and may coexist; the legacy `vault_dir:` is exposed
+  as a synthetic registry entry named `default`.
+
+  ```yaml
+  vaults:
+    - name: personal
+      path: ~/Dropbox/Private/vault
+      identity: ~/.config/locksmith/personal.age   # optional, per-vault
+    - name: work
+      path: ~/work/vault
+  default: personal
+  ```
+
+  New global flag `--vault <name>` selects an entry from the registry.
+  `--vault-dir <path>` still works for tests and one-off scripted runs and
+  takes precedence over the registry. Per-entry `identity` and `gpg_binary`
+  fields override the top-level legacy fields when set.
+
+  `vault config show` now prints the full registry when present.
+  `vault config set` continues to operate on the legacy top-level fields;
+  registry editing is done by editing the YAML directly for now.
+
 ### Changed (internal, no user-visible behavior change)
 
 - **CLI implementation moved from `pkg/gpgsmith` to `pkg/cli/gpgsmith`** to free
@@ -10,6 +37,11 @@
   forthcoming) → `pkg/cli/gpgsmith` (CLI frontend). Future siblings:
   `pkg/cli/pkismith` (when pkismith ships), `pkg/webui/gpgsmith`,
   `pkg/tui/gpgsmith`. Pure mechanical rename — no behavior change.
+
+- **`vault.Config.Resolve(name)` and `vault.Entry`** added to `pkg/vault`.
+  Resolves a vault name to an effective entry, handling all combinations of
+  legacy + registry forms with backward-compatible precedence. Tests cover
+  every resolution path.
 
 ## v0.3.0 - 2026-04-10
 

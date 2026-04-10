@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
-	"path/filepath"
 
 	"github.com/urfave/cli/v3"
 
@@ -40,32 +39,16 @@ func setup(ctx context.Context, cmd *cli.Command) error {
 	// --- Step 1: Create vault ---
 	fmt.Fprintln(os.Stderr, "=== Step 1: Create vault ===")
 
-	vaultDir := cmd.Root().String("vault-dir")
-
-	if vaultDir == "" {
-		cfg, err := vault.LoadConfig("")
-		if err == nil {
-			vaultDir = cfg.VaultDir
-		}
-	}
-
-	if vaultDir == "" {
-		home, err := os.UserHomeDir()
-		if err != nil {
-			return fmt.Errorf("determine home directory: %w", err)
-		}
-		vaultDir = filepath.Join(home, "Dropbox", "Private", "vault")
-		logger.InfoContext(ctx, "no vault dir specified, using default",
-			slog.String("dir", vaultDir),
-		)
+	vaultDir, err := chooseCreateDir(ctx, cmd, logger)
+	if err != nil {
+		return err
 	}
 
 	if err := os.MkdirAll(vaultDir, 0o700); err != nil {
 		return fmt.Errorf("vault create: %w", err)
 	}
 
-	cfg := &vault.Config{VaultDir: vaultDir}
-	if err := vault.SaveConfig("", cfg); err != nil {
+	if err := ensureConfigForCreate(vaultDir); err != nil {
 		return err
 	}
 
