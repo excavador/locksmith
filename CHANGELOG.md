@@ -2,7 +2,21 @@
 
 ## Unreleased
 
+## v0.2.0 - 2026-04-10
+
 ### Added
+
+- **`setup` first-time wizard.** New top-level `gpgsmith setup` command creates
+  a vault, prompts for passphrase, generates a master key + S/E/A subkeys, and
+  opens an interactive session in one step. Accepts `--name`, `--email`,
+  `--algo`, `--subkey-algo`, `--subkey-expiry` flags; prompts interactively
+  for any missing required fields.
+
+- **`keys create` command.** Generates a new certify-only master key plus S/E/A
+  subkeys via `gpg --quick-gen-key`, saves the resulting fingerprint and subkey
+  defaults to `gpgsmith.yaml`, initializes the server registry, and writes an
+  audit entry. Supports `--name`, `--email`, `--algo`, `--expiry`,
+  `--subkey-algo`, `--subkey-expiry`. No more "(planned)" stub.
 
 - **`keys export` command.** Exports the public key and card-bound private key
   stubs from the vault GNUPGHOME into the local `~/.gnupg` keyring, so

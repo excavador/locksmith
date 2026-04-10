@@ -3,6 +3,7 @@ package gpgsmith
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"os"
 	"strings"
 	"text/tabwriter"
@@ -33,7 +34,19 @@ func keysCmd() *cli.Command {
 		Name:  "keys",
 		Usage: "GPG key operations (requires GNUPGHOME set via vault open)",
 		Commands: []*cli.Command{
-			{Name: "create", Usage: "generate new master key and subkeys", Action: notImplemented},
+			{
+				Name:  "create",
+				Usage: "generate new master key and subkeys",
+				Flags: []cli.Flag{
+					&cli.StringFlag{Name: "name", Usage: "real name for the key UID (required)"},
+					&cli.StringFlag{Name: "email", Usage: "email address for the key UID (required)"},
+					&cli.StringFlag{Name: "algo", Usage: "key algorithm", Value: "rsa4096"},
+					&cli.StringFlag{Name: "expiry", Usage: "master key expiry (0 = no expiry)", Value: "0"},
+					&cli.StringFlag{Name: "subkey-algo", Usage: "subkey algorithm (default: same as master)"},
+					&cli.StringFlag{Name: "subkey-expiry", Usage: "subkey expiry", Value: "2y"},
+				},
+				Action: keysCreate,
+			},
 			{Name: "generate", Usage: "add new S/E/A subkeys", Action: keysGenerate},
 			{
 				Name:  "to-card",
@@ -106,6 +119,100 @@ func loadGPGConfig(ctx context.Context, client *gpg.Client) (*gpg.Config, error)
 		return cfg, nil
 	}
 	return cfg, nil
+}
+
+func keysCreate(ctx context.Context, cmd *cli.Command) error {
+	name := cmd.String("name")
+	email := cmd.String("email")
+
+	if name == "" || email == "" {
+		// Prompt interactively if flags not provided.
+		if name == "" {
+			var err error
+			name, err = promptLine("Real name: ")
+			if err != nil {
+				return fmt.Errorf("read name: %w", err)
+			}
+		}
+		if email == "" {
+			var err error
+			email, err = promptLine("Email: ")
+			if err != nil {
+				return fmt.Errorf("read email: %w", err)
+			}
+		}
+	}
+
+	if name == "" {
+		return fmt.Errorf("name is required")
+	}
+	if email == "" {
+		return fmt.Errorf("email is required")
+	}
+
+	client, err := newGPGClient(ctx)
+	if err != nil {
+		return err
+	}
+
+	algo := cmd.String("algo")
+	expiry := cmd.String("expiry")
+
+	// Generate master key (certify-only).
+	fp, err := client.GenerateMasterKey(ctx, gpg.MasterKeyOpts{
+		NameReal:  name,
+		NameEmail: email,
+		Algo:      algo,
+		Expiry:    expiry,
+	})
+	if err != nil {
+		return err
+	}
+
+	fmt.Fprintf(os.Stderr, "Master key created: %s\n", fp)
+
+	// Save gpgsmith.yaml with the new master fingerprint.
+	subkeyAlgo := cmd.String("subkey-algo")
+	if subkeyAlgo == "" {
+		subkeyAlgo = algo
+	}
+	subkeyExpiry := cmd.String("subkey-expiry")
+
+	cfg := &gpg.Config{
+		MasterFP:     fp,
+		SubkeyAlgo:   subkeyAlgo,
+		SubkeyExpiry: subkeyExpiry,
+	}
+	if err := client.SaveConfig(cfg); err != nil {
+		return fmt.Errorf("save config: %w", err)
+	}
+
+	// Generate S/E/A subkeys.
+	if err := client.GenerateSubkeys(ctx, gpg.SubkeyOpts{
+		MasterFP: fp,
+		Algo:     subkeyAlgo,
+		Expiry:   subkeyExpiry,
+	}); err != nil {
+		return fmt.Errorf("generate subkeys: %w", err)
+	}
+
+	fmt.Fprintf(os.Stderr, "Subkeys (S/E/A) created: %s, expires %s\n", subkeyAlgo, subkeyExpiry)
+
+	// Initialize server registry with defaults.
+	if _, regErr := client.LoadServerRegistry(); regErr != nil {
+		loggerFrom(ctx).WarnContext(ctx, "could not initialize server registry",
+			slog.String("error", regErr.Error()),
+		)
+	}
+
+	return audit.Append(client.HomeDir(), audit.Entry{
+		Action:  "create-key",
+		Details: fmt.Sprintf("master %s (%s <%s>) + S/E/A %s expires %s", fp[:16], name, email, subkeyAlgo, subkeyExpiry),
+		Metadata: map[string]string{
+			"master_fp": fp,
+			"uid":       fmt.Sprintf("%s <%s>", name, email),
+		},
+	})
 }
 
 func keysGenerate(ctx context.Context, _ *cli.Command) error {

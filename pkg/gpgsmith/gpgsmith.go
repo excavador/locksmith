@@ -88,8 +88,3 @@ func Main(version, commit, date string) int {
 	}
 	return 0
 }
-
-func notImplemented(ctx context.Context, _ *cli.Command) error {
-	loggerFrom(ctx).WarnContext(ctx, "not implemented yet")
-	return nil
-}

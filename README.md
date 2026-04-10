@@ -26,7 +26,8 @@ operations, YubiKey provisioning, publishing, and record-keeping automatically.
 `~/.gnupg` into gpgsmith's encrypted vault.
 
 **First-time setup (new keys)** -- `gpgsmith setup` wizard creates a vault,
-generates keys, and provisions a YubiKey in one step.
+generates a master key + S/E/A subkeys, and opens a session where you can
+provision a YubiKey.
 
 **Routine subkey rotation** -- revoke expiring subkeys, generate new ones,
 provision to YubiKey, publish, and export SSH key with `card rotate`.
@@ -78,7 +79,19 @@ goreleaser on every tagged version.
 
 ## Quick Start
 
-### 1. Create a vault and import existing keys
+### 1a. First-time setup (new keys) -- recommended
+
+```bash
+# All-in-one wizard: creates vault, generates master key + subkeys, opens session
+gpgsmith setup --name "Your Name" --email "you@example.com"
+
+# Inside the gpgsmith shell:
+gpgsmith keys list                  # verify your new keys
+gpgsmith card provision green --description "on keychain"  # optional: provision a YubiKey
+exit                                # prompts to seal or discard
+```
+
+### 1b. Create a vault and import existing keys
 
 ```bash
 # Create a new vault (prompts for passphrase, opens a session)
@@ -87,6 +100,17 @@ gpgsmith vault create
 # Or import an existing GNUPGHOME
 gpgsmith vault create
 gpgsmith vault import ~/.gnupg
+```
+
+### 1c. Create a vault and generate keys manually
+
+```bash
+gpgsmith vault create
+
+# Inside the gpgsmith shell:
+gpgsmith keys create --name "Your Name" --email "you@example.com"
+gpgsmith keys list                  # verify: 1 master (C) + 3 subkeys (S/E/A)
+exit                                # seal: "initial key creation"
 ```
 
 ### 2. Open the vault
@@ -142,7 +166,7 @@ gpgsmith vault discard              # read-only, nothing to seal
 
 ```
 gpgsmith
-├── setup                  first-time wizard: vault create + keys create + card provision (planned)
+├── setup                  first-time wizard: vault create + keys create + card provision
 ├── vault                  manage encrypted vault
 │   ├── create             create a new vault
 │   ├── import <path>      import existing GNUPGHOME as first snapshot
@@ -155,7 +179,7 @@ gpgsmith
 │       ├── show           show vault config
 │       └── set <k> <v>    set a vault config value
 ├── keys                   GPG key operations (requires GNUPGHOME set via vault open)
-│   ├── create             generate new master key and subkeys (planned)
+│   ├── create             generate new master key and subkeys
 │   ├── generate           add new S/E/A subkeys
 │   ├── to-card            move subkeys to YubiKey (--same-keys / --unique-keys)
 │   ├── list               list keys and subkeys
