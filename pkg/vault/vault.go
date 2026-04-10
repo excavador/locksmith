@@ -264,6 +264,92 @@ func (v *Vault) Restore(ctx context.Context, ref string) (string, error) {
 	return workdir, nil
 }
 
+// SealEphemeral tars and encrypts a directory into the supplied target path,
+// reusing the vault's encryption identity. Unlike Seal, this does NOT
+// generate a timestamped canonical filename — the caller specifies the
+// destination path, which is typically an in-progress session file like
+// "<canonical>.tar.age.session-<hostname>".
+//
+// The write is atomic: a temp file is created in the same directory, the
+// content is encrypted into it, and then the temp file is renamed over the
+// target. This means concurrent readers always see either the previous
+// version of the target or the new one, never a half-written file.
+//
+// The workdir is NOT removed by this function — only by Seal/Discard. Use
+// SealEphemeral when you want to flush the in-memory state to disk
+// periodically (heartbeat) or once on idle-out, while keeping the workdir
+// alive for further operations.
+func (v *Vault) SealEphemeral(ctx context.Context, workdir, targetPath string) error {
+	_ = ctx // reserved for future cancellation support
+
+	if err := validateWorkdir(workdir); err != nil {
+		return fmt.Errorf("vault seal ephemeral: %w", err)
+	}
+	if targetPath == "" {
+		return fmt.Errorf("vault seal ephemeral: target path is empty")
+	}
+
+	dir := filepath.Dir(targetPath)
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		return fmt.Errorf("vault seal ephemeral: create dir: %w", err)
+	}
+
+	tmp, err := os.CreateTemp(dir, ".gpgsmith-eph-")
+	if err != nil {
+		return fmt.Errorf("vault seal ephemeral: create tmp: %w", err)
+	}
+	tmpName := tmp.Name()
+
+	cleanup := func() {
+		_ = tmp.Close()
+		_ = os.Remove(tmpName)
+	}
+
+	if err := tmp.Chmod(0o600); err != nil {
+		cleanup()
+		return fmt.Errorf("vault seal ephemeral: chmod tmp: %w", err)
+	}
+
+	recipient, err := v.recipient()
+	if err != nil {
+		cleanup()
+		return fmt.Errorf("vault seal ephemeral: %w", err)
+	}
+
+	ageWriter, err := age.Encrypt(tmp, recipient)
+	if err != nil {
+		cleanup()
+		return fmt.Errorf("vault seal ephemeral: age encrypt: %w", err)
+	}
+
+	if err := tarDir(workdir, ageWriter); err != nil {
+		_ = ageWriter.Close()
+		cleanup()
+		return fmt.Errorf("vault seal ephemeral: tar: %w", err)
+	}
+
+	if err := ageWriter.Close(); err != nil {
+		cleanup()
+		return fmt.Errorf("vault seal ephemeral: close age writer: %w", err)
+	}
+
+	if err := tmp.Close(); err != nil {
+		_ = os.Remove(tmpName) //nolint:gosec // tmpName from CreateTemp in our own dir
+		return fmt.Errorf("vault seal ephemeral: close tmp: %w", err)
+	}
+
+	if err := os.Rename(tmpName, targetPath); err != nil { //nolint:gosec // both paths derived from caller-supplied vault dir
+		_ = os.Remove(tmpName) //nolint:gosec // tmpName from CreateTemp in our own dir
+		return fmt.Errorf("vault seal ephemeral: rename: %w", err)
+	}
+
+	v.logger.DebugContext(ctx, "vault sealed ephemeral",
+		slog.String("target", filepath.Base(targetPath)),
+	)
+
+	return nil
+}
+
 // sealDir tars and encrypts a directory, writing a new timestamped .tar.age file.
 func (v *Vault) sealDir(ctx context.Context, dir string, message string) (Snapshot, error) {
 	_ = ctx // reserved for future cancellation support

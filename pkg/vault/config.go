@@ -51,6 +51,15 @@ type (
 		Path      string `yaml:"path"`
 		Identity  string `yaml:"identity,omitempty"`
 		GPGBinary string `yaml:"gpg_binary,omitempty"`
+
+		// TrustedMasterFP is the GPG master key fingerprint that this vault
+		// is expected to contain (40 hex chars). Populated on first use
+		// (TOFU): the kernel reads gpgsmith.yaml from the decrypted vault on
+		// the first OpenSession and records what it found. On subsequent
+		// opens the kernel verifies the embedded master_fp matches this
+		// value and refuses with a loud error on mismatch — defending
+		// against snapshot substitution attacks. Empty until first use.
+		TrustedMasterFP string `yaml:"trusted_master_fp,omitempty"`
 	}
 )
 

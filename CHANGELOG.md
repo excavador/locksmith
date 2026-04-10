@@ -43,6 +43,91 @@
   legacy + registry forms with backward-compatible precedence. Tests cover
   every resolution path.
 
+- **`Session` type, TOFU, and process hardening in `pkg/gpgsmith`.** This is the
+  first piece of the kernel API that consumes the ephemeral file convention
+  from the previous commit and ties together all the lower-level pieces
+  (`pkg/vault`, `pkg/gpg`, agent config, ephemeral helpers).
+
+  **`Session` lifecycle**:
+
+  - `OpenSession(ctx, vault, entry, opts)` — decrypts the latest canonical
+    snapshot of `entry` into a tmpfs workdir, writes loopback `gpg.conf`/
+    `gpg-agent.conf`, constructs an authenticated `gpg.Client`, performs the
+    TOFU check (see below), writes the initial `.info` sidecar with status
+    `active`, and starts a heartbeat goroutine. Returns an `OpenSessionResult`
+    with the `Session` plus a `TOFUFingerprint` side-channel that the caller
+    persists into the vault registry on first use.
+  - `Session.Seal(ctx, message)` — explicit seal: writes a new canonical
+    snapshot, deletes the ephemeral file pair, stops the heartbeat, marks
+    the session closed.
+  - `Session.Discard(ctx)` — explicit discard: removes the workdir, deletes
+    the ephemeral file pair, stops the heartbeat, marks the session closed.
+  - `Session.AutoSealAndDrop(ctx)` — idle-timeout end-path: forces a final
+    flush of the workdir to the encrypted `.session-<host>` ephemeral file,
+    marks `.info` status as `idle-sealed`, drops the in-memory workdir, and
+    leaves the ephemeral pair on disk so the next `OpenSession` on the
+    same vault can offer to resume.
+  - `Session.MarkChanged()` — bumps an atomic mutation counter that the
+    heartbeat goroutine uses to decide whether to re-flush the encrypted
+    ephemeral state on each tick.
+  - `Session.IsClosed()` — state-machine probe.
+
+  **Heartbeat goroutine** runs for the lifetime of an open Session. Default
+  tick interval is 30 seconds (`DefaultHeartbeatInterval`). Each tick:
+  refreshes the `.info` sidecar with a fresh `last_heartbeat` timestamp;
+  if the mutation generation has advanced since the last flush, also
+  re-flushes the workdir to the encrypted `.session-<host>` file.
+
+  **TOFU master-key trust**: a new `TrustedMasterFP` field on `vault.Entry`
+  records the master fingerprint of the vault on first use. `OpenSession`
+  reads `gpgsmith.yaml` from the decrypted workdir; if the entry has no
+  trusted fingerprint yet, it returns the discovered one in
+  `OpenSessionResult.TOFUFingerprint` for the caller to persist; if the
+  entry has a trusted fingerprint and it does NOT match, `OpenSession`
+  refuses with `MasterKeyMismatchError` (a typed error with
+  `IsMasterKeyMismatch(err)` test) carrying expected/found/snapshot for
+  the loud user-facing message:
+
+  ```
+  vault "personal": master key mismatch — expected ABC... found XYZ... in
+    20260410T143012Z_setup.tar.age
+  This snapshot was either replaced by an attacker with write access to
+  the vault directory, or generated from a fresh setup that overwrote
+  your real vault.
+  If you legitimately rotated your master key, update the trust anchor
+  with: gpgsmith vault trust personal XYZ...
+  ```
+
+  **`vault.SealEphemeral(ctx, workdir, targetPath)`** is a new method on
+  `*vault.Vault` that tars and encrypts a workdir into a caller-supplied
+  target path (the `.session-<host>` ephemeral file location), reusing the
+  vault's encryption identity. Atomic: temp file + rename so concurrent
+  readers see either the previous version or the new one, never a half
+  write. Unlike `Seal`, it does NOT remove the workdir or generate a
+  timestamped canonical name.
+
+  **Process hardening** (`HardenProcess`): cross-platform best-effort
+  same-user attack mitigations, intended to be called once at daemon
+  startup. On Linux: `prctl(PR_SET_DUMPABLE, 0)` (blocks ptrace,
+  process_vm_readv, and `/proc/<pid>/{mem,maps,root}` from non-root same-user
+  processes — the kernel re-owns those files to root) plus
+  `setrlimit(RLIMIT_CORE, 0)` (no core dumps leaking heap on crash). On
+  macOS: `ptrace(PT_DENY_ATTACH)` (the macOS analog of `PR_SET_DUMPABLE`)
+  plus `RLIMIT_CORE`. The function is exported but **not** called
+  automatically by `OpenSession` or any other kernel API: the daemon
+  binary's main() is responsible for opting in, because hardening is a
+  process-wide flag that would also affect tests and developer debugging.
+
+  **Twelve unit tests** cover the full lifecycle: open + discard, open
+  + seal, TOFU first-use, TOFU match, TOFU mismatch (verifies no
+  leftover files on the failed-open path), TOFU skip on key-less vaults,
+  double-end errors, MarkChanged generation counter, heartbeat
+  `.info` advancement, heartbeat-triggered ephemeral flush on mutation,
+  AutoSealAndDrop idle-path semantics, and `HardenProcess` idempotence.
+  Tests use a generous deadline-based polling helper to accommodate age's
+  scrypt KDF (~1 second per encrypt) without flakiness. Not yet wired into
+  the CLI; that lands when the daemon arrives.
+
 - **Ephemeral session file convention** in `pkg/gpgsmith`. Defines and implements
   the on-disk shape of "session in progress" markers that the daemon will
   write into the vault directory alongside canonical snapshots:
