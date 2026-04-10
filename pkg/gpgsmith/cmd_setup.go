@@ -80,10 +80,16 @@ func setup(ctx context.Context, cmd *cli.Command) error {
 		return fmt.Errorf("create session dir: %w", err)
 	}
 
+	// Configure gpg + gpg-agent for loopback pinentry mode in this workdir,
+	// so the master-key passphrase can be supplied via --passphrase-fd.
+	if err := gpg.WriteAgentConfig(workdir); err != nil {
+		return fmt.Errorf("configure gpg agent: %w", err)
+	}
+
 	// --- Step 2: Generate master key + subkeys ---
 	fmt.Fprintln(os.Stderr, "\n=== Step 2: Generate GPG keys ===")
 
-	if err := setupGenerateKeys(ctx, cmd, workdir, logger); err != nil {
+	if err := setupGenerateKeys(ctx, cmd, workdir, v.Passphrase(), logger); err != nil {
 		return err
 	}
 
@@ -95,7 +101,7 @@ func setup(ctx context.Context, cmd *cli.Command) error {
 	return startSession(ctx, v, workdir, cmd, logger)
 }
 
-func setupGenerateKeys(ctx context.Context, cmd *cli.Command, workdir string, logger *slog.Logger) error {
+func setupGenerateKeys(ctx context.Context, cmd *cli.Command, workdir, passphrase string, logger *slog.Logger) error {
 	name := cmd.String("name")
 	email := cmd.String("email")
 
@@ -121,8 +127,9 @@ func setupGenerateKeys(ctx context.Context, cmd *cli.Command, workdir string, lo
 	}
 
 	client, gpgErr := gpg.New(gpg.Options{
-		HomeDir: workdir,
-		Logger:  logger,
+		HomeDir:    workdir,
+		Logger:     logger,
+		Passphrase: passphrase,
 	})
 	if gpgErr != nil {
 		return gpgErr

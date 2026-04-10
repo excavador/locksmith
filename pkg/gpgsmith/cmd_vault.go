@@ -15,6 +15,7 @@ import (
 	"github.com/urfave/cli/v3"
 	"golang.org/x/term"
 
+	"github.com/excavador/locksmith/pkg/gpg"
 	"github.com/excavador/locksmith/pkg/vault"
 )
 
@@ -303,6 +304,14 @@ func vaultOpen(ctx context.Context, cmd *cli.Command) error {
 }
 
 func startSession(ctx context.Context, v *vault.Vault, workdir string, cmd *cli.Command, logger *slog.Logger) error {
+	// Configure gpg + gpg-agent in this workdir for loopback pinentry mode so
+	// gpgsmith can supply the master-key passphrase via --passphrase-fd. This
+	// makes key operations work in any environment (TTY, non-TTY, container, CI)
+	// and removes the dependency on a working pinentry GUI.
+	if err := gpg.WriteAgentConfig(workdir); err != nil {
+		return fmt.Errorf("configure gpg agent: %w", err)
+	}
+
 	noInteractive := cmd.Bool("no-interactive")
 	isTTY := isTerminal()
 
@@ -334,11 +343,15 @@ func runInteractiveSession(ctx context.Context, v *vault.Vault, workdir string, 
 	shellCmd.Stdin = os.Stdin
 	shellCmd.Stdout = os.Stdout
 	shellCmd.Stderr = os.Stderr
+	sessionEnv := []string{
+		"GNUPGHOME=" + workdir,
+		"GPGSMITH_SESSION=1",
+	}
+	if pass := v.Passphrase(); pass != "" {
+		sessionEnv = append(sessionEnv, "GPGSMITH_VAULT_KEY="+pass)
+	}
 	shellCmd.Env = append(os.Environ(),
-		append([]string{
-			"GNUPGHOME=" + workdir,
-			"GPGSMITH_SESSION=1",
-		}, rc.envs...)...,
+		append(sessionEnv, rc.envs...)...,
 	)
 
 	if err := shellCmd.Run(); err != nil {

@@ -2,6 +2,71 @@
 
 ## Unreleased
 
+## v0.3.0 - 2026-04-10
+
+### Added
+
+- **`keys identity` subcommand group** — full lifecycle management for User
+  IDs (name+email pairs) on the master key. Closes the gap Sergey Vilgelm
+  reported in [excavador/locksmith#1](https://github.com/excavador/locksmith/issues/1):
+  previously the only way to add a new email or revoke an old one was to
+  drop into raw `gpg --edit-key`, with no audit trail and no automatic
+  publish. Four operations:
+  - `keys identity list` — show all identities with their creation and
+    revocation dates, plus validity status (`ultimate`, `revoked`, etc.).
+  - `keys identity add "Name <email@example.com>"` — attach a new identity.
+  - `keys identity revoke <identity-or-index>` — revoke by exact UID string
+    or 1-based index from `identity list`.
+  - `keys identity primary <identity-or-index>` — promote an identity to
+    primary.
+
+  All mutations are captured in the audit log (`add-identity`,
+  `revoke-identity`, `set-primary-identity`) and automatically re-published
+  to enabled servers so keyservers pick up the new state without a manual
+  `server publish`. `keys uid` is registered as a hidden alias for users
+  who prefer GPG's historical terminology.
+
+  Implementation uses GPG 2.1+'s non-interactive `--quick-add-uid`,
+  `--quick-revoke-uid`, and `--quick-set-primary-uid` commands — no
+  fragile `--command-fd` / `--edit-key` scripting required.
+
+- **Loopback pinentry mode by default.** Every gpgsmith vault session now
+  writes a per-vault `gpg.conf` (`pinentry-mode loopback`) and
+  `gpg-agent.conf` (`allow-loopback-pinentry` + 1h/8h cache TTLs) into the
+  ephemeral GNUPGHOME, bypassing pinentry entirely. Consequences:
+  - **No GUI pinentry popup, ever** — key generation, subkey rotation,
+    UID edits, and card operations work identically on desktops, headless
+    servers, containers, and CI runners.
+  - **No dependency** on `pinentry-tty` / `pinentry-curses` being installed.
+  - The vault passphrase doubles as the master-key passphrase and is
+    supplied to gpg over a **private OS pipe (fd 3 via `ExtraFiles`)** —
+    never via argv, environment, or a disk file, so it never appears in
+    `/proc/<pid>/cmdline`.
+  - gpg-agent's cache (1h default, 8h max) means a single passphrase entry
+    covers a typical interactive session.
+  - Inside the interactive gpgsmith shell, `GPGSMITH_VAULT_KEY` is now
+    exported alongside `GNUPGHOME`, so subsequent `gpgsmith` commands
+    inherit the passphrase transparently.
+
+- **Recovered creation/revocation dates for revoked UIDs.** `keys identity
+  list` now shows both the CREATED and REVOKED columns for every identity,
+  including revoked ones. This required switching from `gpg --list-keys`
+  (which strips field 5 from revoked `uid:` records) to `gpg --list-sigs`
+  and teaching `parseUIDs` to recover the creation date from the trailing
+  self-signature (`sig:`) record and the revocation date from the companion
+  `rev:` record.
+
+### Changed
+
+- **gpg record-type strings extracted as package constants** (`recPub`,
+  `recSec`, `recSub`, `recSsb`, `recFpr`, `recUID`, `recSig`, `recRev`) in
+  `pkg/gpg/keys.go`, deduplicating them across `parseColonsOutput` and the
+  new `parseUIDs`.
+
+- **Status strings unified.** `statusActive`, `statusRevoked`, `statusExpired`
+  constants in `pkg/gpgsmith/cmd_keys.go`, shared between `keyStatus` (for
+  subkeys) and `identityStatus` (for identities).
+
 ## v0.2.0 - 2026-04-10
 
 ### Added

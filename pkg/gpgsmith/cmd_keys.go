@@ -15,18 +15,24 @@ import (
 	"github.com/excavador/locksmith/pkg/gpg"
 )
 
+const (
+	statusActive  = "active"
+	statusRevoked = "revoked"
+	statusExpired = "expired"
+)
+
 // keyStatus returns a human-readable status for a key based on validity and expiry.
 func keyStatus(k *gpg.SubKey) string {
 	switch k.Validity {
 	case "r":
-		return "revoked"
+		return statusRevoked
 	case "e":
-		return "expired"
+		return statusExpired
 	}
 	if !k.Expires.IsZero() && k.Expires.Before(time.Now()) {
-		return "expired"
+		return statusExpired
 	}
-	return "active"
+	return statusActive
 }
 
 func keysCmd() *cli.Command {
@@ -81,6 +87,36 @@ func keysCmd() *cli.Command {
 			},
 			{Name: "status", Usage: "show key and card info", Action: keysStatus},
 			{
+				Name:    "identity",
+				Aliases: []string{"uid"},
+				Usage:   "manage identities (name+email UIDs) on the master key",
+				Commands: []*cli.Command{
+					{
+						Name:   "list",
+						Usage:  "list identities on the master key",
+						Action: keysIdentityList,
+					},
+					{
+						Name:      "add",
+						Usage:     `add a new identity (e.g. "Name <email@example.com>")`,
+						ArgsUsage: "<identity>",
+						Action:    keysIdentityAdd,
+					},
+					{
+						Name:      "revoke",
+						Usage:     "revoke an identity by exact match or 1-based index",
+						ArgsUsage: "<identity-or-index>",
+						Action:    keysIdentityRevoke,
+					},
+					{
+						Name:      "primary",
+						Usage:     "set an identity as primary by exact match or 1-based index",
+						ArgsUsage: "<identity-or-index>",
+						Action:    keysIdentityPrimary,
+					},
+				},
+			},
+			{
 				Name:  "config",
 				Usage: "GPG configuration (inside GNUPGHOME)",
 				Commands: []*cli.Command{
@@ -99,8 +135,9 @@ func newGPGClient(ctx context.Context) (*gpg.Client, error) {
 	}
 
 	return gpg.New(gpg.Options{
-		HomeDir: homeDir,
-		Logger:  loggerFrom(ctx),
+		HomeDir:    homeDir,
+		Logger:     loggerFrom(ctx),
+		Passphrase: os.Getenv("GPGSMITH_VAULT_KEY"),
 	})
 }
 

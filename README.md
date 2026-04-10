@@ -153,7 +153,22 @@ gpgsmith card rotate green          # revoke old + generate new + to-card + publ
 exit                                # seal: "rotated subkeys 2026"
 ```
 
-### 6. Check inventory and audit log
+### 6. Manage identities (add/revoke email, change primary)
+
+```bash
+gpgsmith vault open
+gpgsmith keys identity list                                         # current UIDs on the master key
+gpgsmith keys identity add "Your Name <new@example.com>"            # attach a new identity
+gpgsmith keys identity primary 2                                    # promote by 1-based index
+gpgsmith keys identity revoke "Your Name <old@example.com>"         # revoke by exact match
+gpgsmith keys identity revoke 3                                     # or revoke by index
+exit                                                                # seal: "identity changes"
+```
+
+Every mutation is captured in the audit log and auto-republished to enabled servers.
+`keys uid` is kept as an alias for users who prefer GPG's terminology.
+
+### 7. Check inventory and audit log
 
 ```bash
 gpgsmith vault open
@@ -187,6 +202,11 @@ gpgsmith
 │   ├── export             export public key to local ~/.gnupg keyring
 │   ├── ssh-pubkey         export auth subkey as SSH public key (~/.ssh/)
 │   ├── status             show key and card info
+│   ├── identity           manage identities (name+email UIDs) on the master key
+│   │   ├── list           list identities (with creation + revocation dates)
+│   │   ├── add <id>       add a new identity (e.g. "Name <email@example.com>")
+│   │   ├── revoke <ref>   revoke an identity by exact match or 1-based index
+│   │   └── primary <ref>  set an identity as primary
 │   └── config
 │       ├── show           show GPG config (inside GNUPGHOME)
 │       └── set <k> <v>    set a GPG config value
@@ -276,13 +296,42 @@ vault seal  ->  tar tmpdir -> encrypt -> write new .tar.age -> cleanup
 GNUPGHOME/
 ├── pubring.kbx
 ├── trustdb.gpg
-├── gpg.conf
+├── gpg.conf                   # pinentry-mode loopback (set by gpgsmith)
+├── gpg-agent.conf             # allow-loopback-pinentry + cache TTLs (set by gpgsmith)
 ├── private-keys-v1.d/
 ├── gpgsmith.yaml              # GPG config (master_fp, algo, expiry)
 ├── gpgsmith-servers.yaml      # publish target registry (keyservers, GitHub)
 ├── gpgsmith-inventory.yaml    # YubiKey inventory
 └── gpgsmith-audit.yaml        # audit log
 ```
+
+### Pinentry: loopback, always
+
+Every gpgsmith vault is configured for **loopback pinentry mode**. gpgsmith
+writes `gpg.conf` and `gpg-agent.conf` into the ephemeral GNUPGHOME with:
+
+```
+# gpg.conf
+pinentry-mode loopback
+
+# gpg-agent.conf
+allow-loopback-pinentry
+default-cache-ttl 3600
+max-cache-ttl 28800
+```
+
+This means:
+
+- **No GUI pinentry popup, ever** — works identically on desktops, headless
+  servers, containers, and CI runners.
+- **No dependency** on `pinentry-tty` / `pinentry-curses` being installed.
+- The master-key passphrase is identical to the vault passphrase. gpgsmith
+  passes it to gpg over a private OS pipe (fd 3 via `ExtraFiles`), never via
+  argv (`--passphrase`), environment, or disk file.
+- gpg-agent's cache (1 hour default, 8 hours max) covers a typical interactive
+  session so the user isn't re-prompted.
+- Inside the interactive gpgsmith shell, `GPGSMITH_VAULT_KEY` is exported so
+  subsequent `gpgsmith` invocations inherit the passphrase transparently.
 
 ## Encryption
 

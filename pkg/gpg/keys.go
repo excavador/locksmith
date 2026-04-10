@@ -8,6 +8,18 @@ import (
 	"time"
 )
 
+// gpg --with-colons record types we care about.
+const (
+	recPub = "pub"
+	recSec = "sec"
+	recSub = "sub"
+	recSsb = "ssb"
+	recFpr = "fpr"
+	recUID = "uid"
+	recSig = "sig"
+	recRev = "rev"
+)
+
 type (
 	// SubKey represents a GPG key or subkey parsed from --with-colons output.
 	SubKey struct {
@@ -94,7 +106,7 @@ func parseColonsOutput(output string) ([]SubKey, error) {
 
 		recType := fields[0]
 		switch recType {
-		case "pub", "sec", "sub", "ssb":
+		case recPub, recSec, recSub, recSsb:
 			if len(fields) < 12 {
 				continue
 			}
@@ -116,7 +128,7 @@ func parseColonsOutput(output string) ([]SubKey, error) {
 			keys = append(keys, k)
 			current = &keys[len(keys)-1]
 
-		case "fpr":
+		case recFpr:
 			if current != nil && len(fields) > 9 {
 				current.Fingerprint = fields[9]
 			}

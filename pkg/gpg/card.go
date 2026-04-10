@@ -5,6 +5,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"os"
 	"os/exec"
 	"strings"
 )
@@ -81,14 +82,23 @@ func (c *Client) MoveToCard(ctx context.Context, masterFP string, keyIDs []strin
 	}
 	cmds.WriteString("save\n")
 
+	pipeR, passArgs, err := c.passphrasePipe()
+	if err != nil {
+		return err
+	}
+	if pipeR != nil {
+		defer func() { _ = pipeR.Close() }()
+	}
+
 	args := []string{
 		"--homedir", c.homeDir,
 		"--command-fd", "0",
 		"--status-fd", "2",
 		"--yes",
 		"--no-tty",
-		"--edit-key", masterFP,
 	}
+	args = append(args, passArgs...)
+	args = append(args, "--edit-key", masterFP)
 
 	c.logger.DebugContext(ctx, "keytocard exec",
 		slog.String("binary", c.binary),
@@ -97,6 +107,9 @@ func (c *Client) MoveToCard(ctx context.Context, masterFP string, keyIDs []strin
 
 	cmd := exec.CommandContext(ctx, c.binary, args...) //nolint:gosec // binary path from user config
 	cmd.Stdin = strings.NewReader(cmds.String())
+	if pipeR != nil {
+		cmd.ExtraFiles = []*os.File{pipeR}
+	}
 
 	var stderr bytes.Buffer
 	cmd.Stderr = &stderr

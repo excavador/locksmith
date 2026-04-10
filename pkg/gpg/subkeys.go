@@ -5,6 +5,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"os"
 	"os/exec"
 	"strings"
 )
@@ -92,13 +93,22 @@ func (c *Client) Revoke(ctx context.Context, masterFP string, keyID string) erro
 	//   save         — save changes
 	commands := fmt.Sprintf("key %d\nrevkey\ny\n0\n\ny\nsave\n", subkeyIdx)
 
+	pipeR, passArgs, err := c.passphrasePipe()
+	if err != nil {
+		return err
+	}
+	if pipeR != nil {
+		defer func() { _ = pipeR.Close() }()
+	}
+
 	args := []string{
 		"--homedir", c.homeDir,
 		"--command-fd", "0",
 		"--status-fd", "2",
 		"--no-tty",
-		"--edit-key", masterFP,
 	}
+	args = append(args, passArgs...)
+	args = append(args, "--edit-key", masterFP)
 
 	c.logger.DebugContext(ctx, "revkey exec",
 		slog.String("binary", c.binary),
@@ -108,6 +118,9 @@ func (c *Client) Revoke(ctx context.Context, masterFP string, keyID string) erro
 
 	cmd := exec.CommandContext(ctx, c.binary, args...) //nolint:gosec // binary path from user config
 	cmd.Stdin = strings.NewReader(commands)
+	if pipeR != nil {
+		cmd.ExtraFiles = []*os.File{pipeR}
+	}
 
 	var stderr bytes.Buffer
 	cmd.Stderr = &stderr
