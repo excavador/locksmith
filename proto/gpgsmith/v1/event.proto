@@ -10,14 +10,15 @@ import "google/protobuf/timestamp.proto";
 // their own progress UX.
 service EventService {
   // Subscribe opens a server-streaming RPC. The daemon emits events for
-  // the requested vault until the client disconnects. If vault_name is
-  // empty, the daemon emits events for ALL vaults the caller has access
-  // to (currently: all of them).
+  // the session identified by the Gpgsmith-Session header. If the header
+  // is absent, the daemon emits events for ALL sessions the caller has
+  // access to (currently: all of them).
   rpc Subscribe(SubscribeRequest) returns (stream Event);
 }
 
 message SubscribeRequest {
-  string vault_name = 1; // empty = all
+  reserved 1;
+  reserved "vault_name";
 }
 
 // Event is one item in the daemon's pub/sub stream.

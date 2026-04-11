@@ -21,7 +21,11 @@ func newAuditHandler(b Backend) *auditHandler {
 }
 
 func (h *auditHandler) Show(ctx context.Context, req *connect.Request[v1.ShowRequest]) (*connect.Response[v1.ShowResponse], error) {
-	entries, err := h.backend.ShowAudit(ctx, req.Msg.VaultName, int(req.Msg.Last))
+	token, ok := TokenFromContext(ctx)
+	if !ok {
+		return nil, errMissingSessionToken()
+	}
+	entries, err := h.backend.ShowAudit(ctx, token, int(req.Msg.Last))
 	if err != nil {
 		return nil, connectErr(err)
 	}

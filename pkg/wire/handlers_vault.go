@@ -43,11 +43,11 @@ func (h *vaultHandler) Status(ctx context.Context, _ *connect.Request[v1.StatusV
 }
 
 func (h *vaultHandler) Open(ctx context.Context, req *connect.Request[v1.OpenRequest]) (*connect.Response[v1.OpenResponse], error) {
-	res, err := h.backend.OpenVault(ctx, req.Msg.VaultName, req.Msg.Passphrase, fromProtoLockSource(req.Msg.Source))
+	res, token, err := h.backend.OpenVault(ctx, req.Msg.VaultName, req.Msg.Passphrase, fromProtoLockSource(req.Msg.Source))
 	if err != nil {
 		return nil, connectErr(err)
 	}
-	resp := &v1.OpenResponse{}
+	resp := &v1.OpenResponse{Token: token}
 	if res.Session != nil {
 		resp.Session = toProtoSessionInfo(*res.Session)
 	}
@@ -59,17 +59,22 @@ func (h *vaultHandler) Open(ctx context.Context, req *connect.Request[v1.OpenReq
 
 func (h *vaultHandler) Resume(ctx context.Context, req *connect.Request[v1.ResumeRequest]) (*connect.Response[v1.ResumeResponse], error) {
 	resume := req.Msg.Action == v1.ResumeRequest_ACTION_RESUME
-	info, err := h.backend.ResumeVault(ctx, req.Msg.VaultName, req.Msg.Passphrase, fromProtoLockSource(req.Msg.Source), resume)
+	info, token, err := h.backend.ResumeVault(ctx, req.Msg.VaultName, req.Msg.Passphrase, fromProtoLockSource(req.Msg.Source), resume)
 	if err != nil {
 		return nil, connectErr(err)
 	}
 	return connect.NewResponse(&v1.ResumeResponse{
 		Session: toProtoSessionInfo(info),
+		Token:   token,
 	}), nil
 }
 
 func (h *vaultHandler) Seal(ctx context.Context, req *connect.Request[v1.SealRequest]) (*connect.Response[v1.SealResponse], error) {
-	snap, err := h.backend.SealVault(ctx, req.Msg.VaultName, req.Msg.Message)
+	token, ok := TokenFromContext(ctx)
+	if !ok {
+		return nil, errMissingSessionToken()
+	}
+	snap, err := h.backend.SealVault(ctx, token, req.Msg.Message)
 	if err != nil {
 		return nil, connectErr(err)
 	}
@@ -78,8 +83,12 @@ func (h *vaultHandler) Seal(ctx context.Context, req *connect.Request[v1.SealReq
 	}), nil
 }
 
-func (h *vaultHandler) Discard(ctx context.Context, req *connect.Request[v1.DiscardRequest]) (*connect.Response[v1.DiscardResponse], error) {
-	if err := h.backend.DiscardVault(ctx, req.Msg.VaultName); err != nil {
+func (h *vaultHandler) Discard(ctx context.Context, _ *connect.Request[v1.DiscardRequest]) (*connect.Response[v1.DiscardResponse], error) {
+	token, ok := TokenFromContext(ctx)
+	if !ok {
+		return nil, errMissingSessionToken()
+	}
+	if err := h.backend.DiscardVault(ctx, token); err != nil {
 		return nil, connectErr(err)
 	}
 	return connect.NewResponse(&v1.DiscardResponse{}), nil
@@ -96,13 +105,14 @@ func (h *vaultHandler) Snapshots(ctx context.Context, req *connect.Request[v1.Sn
 }
 
 func (h *vaultHandler) Create(ctx context.Context, req *connect.Request[v1.CreateVaultRequest]) (*connect.Response[v1.CreateVaultResponse], error) {
-	snap, info, err := h.backend.CreateVault(ctx, req.Msg.Name, req.Msg.Path, req.Msg.Passphrase)
+	snap, info, token, err := h.backend.CreateVault(ctx, req.Msg.Name, req.Msg.Path, req.Msg.Passphrase)
 	if err != nil {
 		return nil, connectErr(err)
 	}
 	return connect.NewResponse(&v1.CreateVaultResponse{
 		Snapshot: toProtoSnapshot(snap),
 		Session:  toProtoSessionInfo(info),
+		Token:    token,
 	}), nil
 }
 

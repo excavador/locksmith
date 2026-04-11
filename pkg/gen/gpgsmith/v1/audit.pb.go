@@ -21,9 +21,9 @@ const (
 	_ = protoimpl.EnforceVersion(protoimpl.MaxVersion - 20)
 )
 
+// Session is identified by the Gpgsmith-Session header. Field 1 is reserved.
 type ShowRequest struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
-	VaultName     string                 `protobuf:"bytes,1,opt,name=vault_name,json=vaultName,proto3" json:"vault_name,omitempty"`
 	Last          int32                  `protobuf:"varint,2,opt,name=last,proto3" json:"last,omitempty"` // optional limit; 0 = all
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
@@ -57,13 +57,6 @@ func (x *ShowRequest) ProtoReflect() protoreflect.Message {
 // Deprecated: Use ShowRequest.ProtoReflect.Descriptor instead.
 func (*ShowRequest) Descriptor() ([]byte, []int) {
 	return file_gpgsmith_v1_audit_proto_rawDescGZIP(), []int{0}
-}
-
-func (x *ShowRequest) GetVaultName() string {
-	if x != nil {
-		return x.VaultName
-	}
-	return ""
 }
 
 func (x *ShowRequest) GetLast() int32 {
@@ -121,11 +114,10 @@ var File_gpgsmith_v1_audit_proto protoreflect.FileDescriptor
 
 const file_gpgsmith_v1_audit_proto_rawDesc = "" +
 	"\n" +
-	"\x17gpgsmith/v1/audit.proto\x12\vgpgsmith.v1\x1a\x18gpgsmith/v1/common.proto\"@\n" +
-	"\vShowRequest\x12\x1d\n" +
-	"\n" +
-	"vault_name\x18\x01 \x01(\tR\tvaultName\x12\x12\n" +
-	"\x04last\x18\x02 \x01(\x05R\x04last\"A\n" +
+	"\x17gpgsmith/v1/audit.proto\x12\vgpgsmith.v1\x1a\x18gpgsmith/v1/common.proto\"3\n" +
+	"\vShowRequest\x12\x12\n" +
+	"\x04last\x18\x02 \x01(\x05R\x04lastJ\x04\b\x01\x10\x02R\n" +
+	"vault_name\"A\n" +
 	"\fShowResponse\x121\n" +
 	"\aentries\x18\x01 \x03(\v2\x17.gpgsmith.v1.AuditEntryR\aentries2K\n" +
 	"\fAuditService\x12;\n" +

@@ -62,7 +62,11 @@ func NewUnixSocketClient(socketPath string) *Client {
 			IdleConnTimeout: 90 * time.Second,
 		},
 	}
-	return NewHTTPClient(hc, "http://unix")
+	// Production CLI client: every outbound call carries the current
+	// GPGSMITH_SESSION env var as a Gpgsmith-Session header (no-op when
+	// unset). Tests that construct a Client directly via NewHTTPClient
+	// without this option get a bare connection with no auto-stamping.
+	return NewHTTPClient(hc, "http://unix", WithEnvSessionInterceptor())
 }
 
 // NewHTTPClient builds a Client around an arbitrary http.Client and base

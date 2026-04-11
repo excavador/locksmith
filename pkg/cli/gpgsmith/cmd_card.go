@@ -58,13 +58,11 @@ func cardProvision(ctx context.Context, cmd *cli.Command) error {
 	}
 	defer client.Close()
 
-	vaultName, err := resolveVaultName(ctx, client, cmd)
-	if err != nil {
+	if err := ensureSessionToken(ctx, client); err != nil {
 		return fmt.Errorf("card provision: %w", err)
 	}
 
 	resp, err := client.Card.Provision(ctx, connect.NewRequest(&v1.ProvisionRequest{
-		VaultName:   vaultName,
 		Label:       label,
 		Description: cmd.String("description"),
 		SameKeys:    cmd.Bool("same-keys"),
@@ -92,14 +90,12 @@ func cardRotate(ctx context.Context, cmd *cli.Command) error {
 	}
 	defer client.Close()
 
-	vaultName, err := resolveVaultName(ctx, client, cmd)
-	if err != nil {
+	if err := ensureSessionToken(ctx, client); err != nil {
 		return fmt.Errorf("card rotate: %w", err)
 	}
 
 	resp, err := client.Card.Rotate(ctx, connect.NewRequest(&v1.RotateRequest{
-		VaultName: vaultName,
-		Label:     label,
+		Label: label,
 	}))
 	if err != nil {
 		return fmt.Errorf("card rotate: %w", err)
@@ -120,14 +116,12 @@ func cardRevoke(ctx context.Context, cmd *cli.Command) error {
 	}
 	defer client.Close()
 
-	vaultName, err := resolveVaultName(ctx, client, cmd)
-	if err != nil {
+	if err := ensureSessionToken(ctx, client); err != nil {
 		return fmt.Errorf("card revoke: %w", err)
 	}
 
 	_, err = client.Card.Revoke(ctx, connect.NewRequest(&v1.RevokeCardRequest{
-		VaultName: vaultName,
-		Label:     label,
+		Label: label,
 	}))
 	if err != nil {
 		return fmt.Errorf("card revoke: %w", err)
@@ -136,19 +130,18 @@ func cardRevoke(ctx context.Context, cmd *cli.Command) error {
 	return nil
 }
 
-func cardInventory(ctx context.Context, cmd *cli.Command) error {
+func cardInventory(ctx context.Context, _ *cli.Command) error {
 	client, err := ensureClient(ctx)
 	if err != nil {
 		return fmt.Errorf("card inventory: %w", err)
 	}
 	defer client.Close()
 
-	vaultName, err := resolveVaultName(ctx, client, cmd)
-	if err != nil {
+	if err := ensureSessionToken(ctx, client); err != nil {
 		return fmt.Errorf("card inventory: %w", err)
 	}
 
-	resp, err := client.Card.Inventory(ctx, connect.NewRequest(&v1.InventoryRequest{VaultName: vaultName}))
+	resp, err := client.Card.Inventory(ctx, connect.NewRequest(&v1.InventoryRequest{}))
 	if err != nil {
 		return fmt.Errorf("card inventory: %w", err)
 	}
@@ -180,13 +173,11 @@ func cardDiscover(ctx context.Context, cmd *cli.Command) error {
 	}
 	defer client.Close()
 
-	vaultName, err := resolveVaultName(ctx, client, cmd)
-	if err != nil {
+	if err := ensureSessionToken(ctx, client); err != nil {
 		return fmt.Errorf("card discover: %w", err)
 	}
 
 	resp, err := client.Card.Discover(ctx, connect.NewRequest(&v1.DiscoverRequest{
-		VaultName:   vaultName,
 		Label:       cmd.Args().Get(0),
 		Description: cmd.String("description"),
 	}))

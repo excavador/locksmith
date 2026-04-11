@@ -23,7 +23,6 @@ const (
 
 type ProvisionRequest struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
-	VaultName     string                 `protobuf:"bytes,1,opt,name=vault_name,json=vaultName,proto3" json:"vault_name,omitempty"`
 	Label         string                 `protobuf:"bytes,2,opt,name=label,proto3" json:"label,omitempty"`
 	Description   string                 `protobuf:"bytes,3,opt,name=description,proto3" json:"description,omitempty"`
 	SameKeys      bool                   `protobuf:"varint,4,opt,name=same_keys,json=sameKeys,proto3" json:"same_keys,omitempty"`
@@ -60,13 +59,6 @@ func (x *ProvisionRequest) ProtoReflect() protoreflect.Message {
 // Deprecated: Use ProvisionRequest.ProtoReflect.Descriptor instead.
 func (*ProvisionRequest) Descriptor() ([]byte, []int) {
 	return file_gpgsmith_v1_card_proto_rawDescGZIP(), []int{0}
-}
-
-func (x *ProvisionRequest) GetVaultName() string {
-	if x != nil {
-		return x.VaultName
-	}
-	return ""
 }
 
 func (x *ProvisionRequest) GetLabel() string {
@@ -151,7 +143,6 @@ func (x *ProvisionResponse) GetSshPubkeyPath() string {
 
 type RotateRequest struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
-	VaultName     string                 `protobuf:"bytes,1,opt,name=vault_name,json=vaultName,proto3" json:"vault_name,omitempty"`
 	Label         string                 `protobuf:"bytes,2,opt,name=label,proto3" json:"label,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
@@ -185,13 +176,6 @@ func (x *RotateRequest) ProtoReflect() protoreflect.Message {
 // Deprecated: Use RotateRequest.ProtoReflect.Descriptor instead.
 func (*RotateRequest) Descriptor() ([]byte, []int) {
 	return file_gpgsmith_v1_card_proto_rawDescGZIP(), []int{2}
-}
-
-func (x *RotateRequest) GetVaultName() string {
-	if x != nil {
-		return x.VaultName
-	}
-	return ""
 }
 
 func (x *RotateRequest) GetLabel() string {
@@ -247,7 +231,6 @@ func (x *RotateResponse) GetCard() *CardInfo {
 
 type RevokeCardRequest struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
-	VaultName     string                 `protobuf:"bytes,1,opt,name=vault_name,json=vaultName,proto3" json:"vault_name,omitempty"`
 	Label         string                 `protobuf:"bytes,2,opt,name=label,proto3" json:"label,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
@@ -281,13 +264,6 @@ func (x *RevokeCardRequest) ProtoReflect() protoreflect.Message {
 // Deprecated: Use RevokeCardRequest.ProtoReflect.Descriptor instead.
 func (*RevokeCardRequest) Descriptor() ([]byte, []int) {
 	return file_gpgsmith_v1_card_proto_rawDescGZIP(), []int{4}
-}
-
-func (x *RevokeCardRequest) GetVaultName() string {
-	if x != nil {
-		return x.VaultName
-	}
-	return ""
 }
 
 func (x *RevokeCardRequest) GetLabel() string {
@@ -335,7 +311,6 @@ func (*RevokeCardResponse) Descriptor() ([]byte, []int) {
 
 type InventoryRequest struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
-	VaultName     string                 `protobuf:"bytes,1,opt,name=vault_name,json=vaultName,proto3" json:"vault_name,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -368,13 +343,6 @@ func (x *InventoryRequest) ProtoReflect() protoreflect.Message {
 // Deprecated: Use InventoryRequest.ProtoReflect.Descriptor instead.
 func (*InventoryRequest) Descriptor() ([]byte, []int) {
 	return file_gpgsmith_v1_card_proto_rawDescGZIP(), []int{6}
-}
-
-func (x *InventoryRequest) GetVaultName() string {
-	if x != nil {
-		return x.VaultName
-	}
-	return ""
 }
 
 type InventoryResponse struct {
@@ -423,7 +391,6 @@ func (x *InventoryResponse) GetCards() []*CardInfo {
 
 type DiscoverRequest struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
-	VaultName     string                 `protobuf:"bytes,1,opt,name=vault_name,json=vaultName,proto3" json:"vault_name,omitempty"`
 	Label         string                 `protobuf:"bytes,2,opt,name=label,proto3" json:"label,omitempty"`
 	Description   string                 `protobuf:"bytes,3,opt,name=description,proto3" json:"description,omitempty"`
 	unknownFields protoimpl.UnknownFields
@@ -458,13 +425,6 @@ func (x *DiscoverRequest) ProtoReflect() protoreflect.Message {
 // Deprecated: Use DiscoverRequest.ProtoReflect.Descriptor instead.
 func (*DiscoverRequest) Descriptor() ([]byte, []int) {
 	return file_gpgsmith_v1_card_proto_rawDescGZIP(), []int{8}
-}
-
-func (x *DiscoverRequest) GetVaultName() string {
-	if x != nil {
-		return x.VaultName
-	}
-	return ""
 }
 
 func (x *DiscoverRequest) GetLabel() string {
@@ -537,39 +497,34 @@ var File_gpgsmith_v1_card_proto protoreflect.FileDescriptor
 
 const file_gpgsmith_v1_card_proto_rawDesc = "" +
 	"\n" +
-	"\x16gpgsmith/v1/card.proto\x12\vgpgsmith.v1\x1a\x18gpgsmith/v1/common.proto\"\xa7\x01\n" +
-	"\x10ProvisionRequest\x12\x1d\n" +
-	"\n" +
-	"vault_name\x18\x01 \x01(\tR\tvaultName\x12\x14\n" +
+	"\x16gpgsmith/v1/card.proto\x12\vgpgsmith.v1\x1a\x18gpgsmith/v1/common.proto\"\x9a\x01\n" +
+	"\x10ProvisionRequest\x12\x14\n" +
 	"\x05label\x18\x02 \x01(\tR\x05label\x12 \n" +
 	"\vdescription\x18\x03 \x01(\tR\vdescription\x12\x1b\n" +
 	"\tsame_keys\x18\x04 \x01(\bR\bsameKeys\x12\x1f\n" +
 	"\vunique_keys\x18\x05 \x01(\bR\n" +
-	"uniqueKeys\"f\n" +
+	"uniqueKeysJ\x04\b\x01\x10\x02R\n" +
+	"vault_name\"f\n" +
 	"\x11ProvisionResponse\x12)\n" +
 	"\x04card\x18\x01 \x01(\v2\x15.gpgsmith.v1.CardInfoR\x04card\x12&\n" +
-	"\x0fssh_pubkey_path\x18\x02 \x01(\tR\rsshPubkeyPath\"D\n" +
-	"\rRotateRequest\x12\x1d\n" +
-	"\n" +
-	"vault_name\x18\x01 \x01(\tR\tvaultName\x12\x14\n" +
-	"\x05label\x18\x02 \x01(\tR\x05label\";\n" +
+	"\x0fssh_pubkey_path\x18\x02 \x01(\tR\rsshPubkeyPath\"7\n" +
+	"\rRotateRequest\x12\x14\n" +
+	"\x05label\x18\x02 \x01(\tR\x05labelJ\x04\b\x01\x10\x02R\n" +
+	"vault_name\";\n" +
 	"\x0eRotateResponse\x12)\n" +
-	"\x04card\x18\x01 \x01(\v2\x15.gpgsmith.v1.CardInfoR\x04card\"H\n" +
-	"\x11RevokeCardRequest\x12\x1d\n" +
-	"\n" +
-	"vault_name\x18\x01 \x01(\tR\tvaultName\x12\x14\n" +
-	"\x05label\x18\x02 \x01(\tR\x05label\"\x14\n" +
-	"\x12RevokeCardResponse\"1\n" +
-	"\x10InventoryRequest\x12\x1d\n" +
-	"\n" +
-	"vault_name\x18\x01 \x01(\tR\tvaultName\"@\n" +
+	"\x04card\x18\x01 \x01(\v2\x15.gpgsmith.v1.CardInfoR\x04card\";\n" +
+	"\x11RevokeCardRequest\x12\x14\n" +
+	"\x05label\x18\x02 \x01(\tR\x05labelJ\x04\b\x01\x10\x02R\n" +
+	"vault_name\"\x14\n" +
+	"\x12RevokeCardResponse\"$\n" +
+	"\x10InventoryRequestJ\x04\b\x01\x10\x02R\n" +
+	"vault_name\"@\n" +
 	"\x11InventoryResponse\x12+\n" +
-	"\x05cards\x18\x01 \x03(\v2\x15.gpgsmith.v1.CardInfoR\x05cards\"h\n" +
-	"\x0fDiscoverRequest\x12\x1d\n" +
-	"\n" +
-	"vault_name\x18\x01 \x01(\tR\tvaultName\x12\x14\n" +
+	"\x05cards\x18\x01 \x03(\v2\x15.gpgsmith.v1.CardInfoR\x05cards\"[\n" +
+	"\x0fDiscoverRequest\x12\x14\n" +
 	"\x05label\x18\x02 \x01(\tR\x05label\x12 \n" +
-	"\vdescription\x18\x03 \x01(\tR\vdescription\"o\n" +
+	"\vdescription\x18\x03 \x01(\tR\vdescriptionJ\x04\b\x01\x10\x02R\n" +
+	"vault_name\"o\n" +
 	"\x10DiscoverResponse\x12)\n" +
 	"\x04card\x18\x01 \x01(\v2\x15.gpgsmith.v1.CardInfoR\x04card\x120\n" +
 	"\x14already_in_inventory\x18\x02 \x01(\bR\x12alreadyInInventory2\xfc\x02\n" +

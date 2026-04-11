@@ -3,11 +3,11 @@ package gpgsmith
 import (
 	"context"
 	"fmt"
+	"os"
 	"strings"
 	"time"
 
 	"connectrpc.com/connect"
-	"github.com/urfave/cli/v3"
 
 	"github.com/excavador/locksmith/pkg/daemon"
 	v1 "github.com/excavador/locksmith/pkg/gen/gpgsmith/v1"
@@ -23,6 +23,10 @@ const (
 // ensureClient spins up the daemon (if needed) and returns a typed wire
 // client connected to its Unix socket. Callers must defer client.Close()
 // to release idle transport connections.
+//
+// The returned client carries the env-var session interceptor, so every
+// session-bearing RPC is stamped with the current GPGSMITH_SESSION token
+// at request time.
 func ensureClient(ctx context.Context) (*wire.Client, error) {
 	if err := EnsureDaemon(ctx, defaultEnsureDaemonTimeout); err != nil {
 		return nil, err
@@ -34,30 +38,42 @@ func ensureClient(ctx context.Context) (*wire.Client, error) {
 	return wire.NewUnixSocketClient(sockPath), nil
 }
 
-// resolveVaultName picks the vault name the command should target. It
-// consults the root --vault flag first; if unset and the daemon has
-// exactly one open session, it uses that session's vault name.
-// Otherwise it returns a helpful error listing the open vaults.
-func resolveVaultName(ctx context.Context, client *wire.Client, cmd *cli.Command) (string, error) {
-	if name := cmd.Root().String("vault"); name != "" {
-		return name, nil
+// ensureSessionToken makes sure GPGSMITH_SESSION is set in the current
+// process before a session-bearing RPC is issued. The outbound
+// interceptor reads the env var at request time, so it is sufficient to
+// set it here and let the regular command body run afterward.
+//
+// Resolution order:
+//  1. GPGSMITH_SESSION already set — use it verbatim.
+//  2. Exactly one session in ListSessions — bind to it automatically
+//     via the Gpgsmith-Session-Tokens response header.
+//  3. Zero sessions — return a helpful "run vault open" error.
+//  4. More than one session — refuse and ask the user to disambiguate.
+func ensureSessionToken(ctx context.Context, client *wire.Client) error {
+	if tok := os.Getenv(wire.SessionEnvVar); tok != "" {
+		return nil
 	}
-	resp, err := client.Vault.Status(ctx, connect.NewRequest(&v1.StatusVaultRequest{}))
+	resp, err := client.Daemon.ListSessions(ctx, connect.NewRequest(&v1.ListSessionsRequest{}))
 	if err != nil {
-		return "", fmt.Errorf("resolve vault: %w", err)
+		return fmt.Errorf("resolve session: %w", err)
 	}
-	open := resp.Msg.GetOpen()
-	switch len(open) {
+	tokens := wire.DecodeSessionTokens(resp.Header().Get(wire.SessionTokenListHeader))
+	switch len(tokens) {
 	case 0:
-		return "", fmt.Errorf("no vaults are open; run `gpgsmith vault open <name>` first")
+		return fmt.Errorf("no open sessions; run `gpgsmith vault open <name>` first")
 	case 1:
-		return open[0].GetVaultName(), nil
-	default:
-		names := make([]string, 0, len(open))
-		for _, s := range open {
-			names = append(names, s.GetVaultName())
+		_ = os.Setenv(wire.SessionEnvVar, tokens[0].Token)
+		if tokens[0].VaultName != "" {
+			_ = os.Setenv(wire.SessionVaultNameEnvVar, tokens[0].VaultName)
 		}
-		return "", fmt.Errorf("multiple vaults open (%s); pass --vault <name>", strings.Join(names, ", "))
+		return nil
+	default:
+		names := make([]string, 0, len(tokens))
+		for _, t := range tokens {
+			names = append(names, t.VaultName)
+		}
+		return fmt.Errorf("multiple open sessions (%s); set GPGSMITH_SESSION to the token you want to target",
+			strings.Join(names, ", "))
 	}
 }
 

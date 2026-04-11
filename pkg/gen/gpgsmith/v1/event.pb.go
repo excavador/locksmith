@@ -88,7 +88,6 @@ func (EventKind) EnumDescriptor() ([]byte, []int) {
 
 type SubscribeRequest struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
-	VaultName     string                 `protobuf:"bytes,1,opt,name=vault_name,json=vaultName,proto3" json:"vault_name,omitempty"` // empty = all
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -121,13 +120,6 @@ func (x *SubscribeRequest) ProtoReflect() protoreflect.Message {
 // Deprecated: Use SubscribeRequest.ProtoReflect.Descriptor instead.
 func (*SubscribeRequest) Descriptor() ([]byte, []int) {
 	return file_gpgsmith_v1_event_proto_rawDescGZIP(), []int{0}
-}
-
-func (x *SubscribeRequest) GetVaultName() string {
-	if x != nil {
-		return x.VaultName
-	}
-	return ""
 }
 
 // Event is one item in the daemon's pub/sub stream.
@@ -219,10 +211,9 @@ var File_gpgsmith_v1_event_proto protoreflect.FileDescriptor
 
 const file_gpgsmith_v1_event_proto_rawDesc = "" +
 	"\n" +
-	"\x17gpgsmith/v1/event.proto\x12\vgpgsmith.v1\x1a\x1fgoogle/protobuf/timestamp.proto\"1\n" +
-	"\x10SubscribeRequest\x12\x1d\n" +
-	"\n" +
-	"vault_name\x18\x01 \x01(\tR\tvaultName\"\xa8\x02\n" +
+	"\x17gpgsmith/v1/event.proto\x12\vgpgsmith.v1\x1a\x1fgoogle/protobuf/timestamp.proto\"$\n" +
+	"\x10SubscribeRequestJ\x04\b\x01\x10\x02R\n" +
+	"vault_name\"\xa8\x02\n" +
 	"\x05Event\x128\n" +
 	"\ttimestamp\x18\x01 \x01(\v2\x1a.google.protobuf.TimestampR\ttimestamp\x12\x1d\n" +
 	"\n" +

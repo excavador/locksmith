@@ -14,19 +14,18 @@ import (
 	"github.com/excavador/locksmith/pkg/wire"
 )
 
-func keysIdentityList(ctx context.Context, cmd *cli.Command) error {
+func keysIdentityList(ctx context.Context, _ *cli.Command) error {
 	client, err := ensureClient(ctx)
 	if err != nil {
 		return fmt.Errorf("identity list: %w", err)
 	}
 	defer client.Close()
 
-	vaultName, err := resolveVaultName(ctx, client, cmd)
-	if err != nil {
+	if err := ensureSessionToken(ctx, client); err != nil {
 		return fmt.Errorf("identity list: %w", err)
 	}
 
-	resp, err := client.Identity.List(ctx, connect.NewRequest(&v1.ListIdentitiesRequest{VaultName: vaultName}))
+	resp, err := client.Identity.List(ctx, connect.NewRequest(&v1.ListIdentitiesRequest{}))
 	if err != nil {
 		return fmt.Errorf("identity list: %w", err)
 	}
@@ -70,14 +69,12 @@ func keysIdentityAdd(ctx context.Context, cmd *cli.Command) error {
 	}
 	defer client.Close()
 
-	vaultName, err := resolveVaultName(ctx, client, cmd)
-	if err != nil {
+	if err := ensureSessionToken(ctx, client); err != nil {
 		return fmt.Errorf("identity add: %w", err)
 	}
 
 	_, err = client.Identity.Add(ctx, connect.NewRequest(&v1.AddIdentityRequest{
-		VaultName: vaultName,
-		Uid:       uid,
+		Uid: uid,
 	}))
 	if err != nil {
 		return fmt.Errorf("identity add: %w", err)
@@ -87,20 +84,18 @@ func keysIdentityAdd(ctx context.Context, cmd *cli.Command) error {
 }
 
 func keysIdentityRevoke(ctx context.Context, cmd *cli.Command) error {
-	return identityMutate(ctx, cmd, "revoke", func(c *wire.Client, vault, uid string) error {
+	return identityMutate(ctx, cmd, "revoke", func(c *wire.Client, uid string) error {
 		_, err := c.Identity.Revoke(ctx, connect.NewRequest(&v1.RevokeIdentityRequest{
-			VaultName: vault,
-			Uid:       uid,
+			Uid: uid,
 		}))
 		return err
 	})
 }
 
 func keysIdentityPrimary(ctx context.Context, cmd *cli.Command) error {
-	return identityMutate(ctx, cmd, "primary", func(c *wire.Client, vault, uid string) error {
+	return identityMutate(ctx, cmd, "primary", func(c *wire.Client, uid string) error {
 		_, err := c.Identity.Primary(ctx, connect.NewRequest(&v1.PrimaryIdentityRequest{
-			VaultName: vault,
-			Uid:       uid,
+			Uid: uid,
 		}))
 		return err
 	})
@@ -109,7 +104,7 @@ func keysIdentityPrimary(ctx context.Context, cmd *cli.Command) error {
 // identityMutate wraps the shared path for identity revoke/primary: resolve
 // the target identity (by exact match or by 1-based index) and invoke the
 // supplied RPC call.
-func identityMutate(ctx context.Context, cmd *cli.Command, label string, call func(*wire.Client, string, string) error) error {
+func identityMutate(ctx context.Context, cmd *cli.Command, label string, call func(*wire.Client, string) error) error {
 	arg := cmd.Args().First()
 	if arg == "" {
 		return fmt.Errorf("identity %s: missing identity argument", label)
@@ -121,14 +116,13 @@ func identityMutate(ctx context.Context, cmd *cli.Command, label string, call fu
 	}
 	defer client.Close()
 
-	vaultName, err := resolveVaultName(ctx, client, cmd)
-	if err != nil {
+	if err := ensureSessionToken(ctx, client); err != nil {
 		return fmt.Errorf("identity %s: %w", label, err)
 	}
 
 	uid := arg
 	if n, parseErr := strconv.Atoi(arg); parseErr == nil {
-		resp, listErr := client.Identity.List(ctx, connect.NewRequest(&v1.ListIdentitiesRequest{VaultName: vaultName}))
+		resp, listErr := client.Identity.List(ctx, connect.NewRequest(&v1.ListIdentitiesRequest{}))
 		if listErr != nil {
 			return fmt.Errorf("identity %s: %w", label, listErr)
 		}
@@ -139,7 +133,7 @@ func identityMutate(ctx context.Context, cmd *cli.Command, label string, call fu
 		uid = ids[n-1].GetUid()
 	}
 
-	if err := call(client, vaultName, uid); err != nil {
+	if err := call(client, uid); err != nil {
 		return fmt.Errorf("identity %s: %w", label, err)
 	}
 	fmt.Fprintf(os.Stderr, "%s: %s\n", label, uid)

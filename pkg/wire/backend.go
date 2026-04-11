@@ -36,12 +36,12 @@ import (
 type (
 	// Backend is the contract that the wire handlers call into. It exposes
 	// the gpgsmith kernel surface in a session-aware, daemon-style API:
-	// every session-bearing method takes a vault name to identify which
-	// open Session to operate on. The Backend implementation (typically
-	// *daemon.Daemon) is responsible for looking up the Session in its
-	// in-memory map, returning a useful error if no session is open for
-	// the given name, and routing the call to the appropriate kernel
-	// function.
+	// every session-bearing method takes an opaque session token to
+	// identify which open Session to operate on. The Backend implementation
+	// (typically *daemon.Daemon) is responsible for looking up the Session
+	// in its in-memory token-keyed map, returning a useful error if no
+	// session exists for the token, and routing the call to the appropriate
+	// kernel function.
 	//
 	// Methods are grouped by the protobuf service they back, in the same
 	// order services appear in proto/gpgsmith/v1/.
@@ -55,68 +55,82 @@ type (
 		DaemonStatus(ctx context.Context) (DaemonStatus, error)
 		DaemonShutdown(ctx context.Context, gracefulTimeoutSeconds int) error
 		ListSessions(ctx context.Context) ([]SessionInfo, error)
+		// ListSessionTokens returns the open sessions together with
+		// their opaque tokens. It is only used by local CLI callers
+		// to auto-bind GPGSMITH_SESSION when exactly one session is
+		// open. The tokens are transported via the
+		// Gpgsmith-Session-Tokens response header — we intentionally
+		// keep them out of SessionInfo/proto so non-local callers
+		// (e.g. the web UI shim) never see them by accident.
+		ListSessionTokens(ctx context.Context) ([]SessionTokenEntry, error)
 
 		// ===== VaultService =====
+		//
+		// OpenVault, ResumeVault and CreateVault each mint a fresh opaque
+		// session token alongside their SessionInfo. Frontends bind that
+		// token to the Gpgsmith-Session header (typically via env var
+		// GPGSMITH_SESSION or a cookie) for subsequent session-bearing
+		// RPCs.
 
 		ListVaults(ctx context.Context) (entries []vault.Entry, defaultName string, err error)
 		StatusVaults(ctx context.Context) (open []SessionInfo, recoverable []ResumeOption, err error)
-		OpenVault(ctx context.Context, name, passphrase string, source gpgsmith.LockSource) (OpenResult, error)
-		ResumeVault(ctx context.Context, name, passphrase string, source gpgsmith.LockSource, resume bool) (SessionInfo, error)
-		SealVault(ctx context.Context, name, message string) (vault.Snapshot, error)
-		DiscardVault(ctx context.Context, name string) error
+		OpenVault(ctx context.Context, name, passphrase string, source gpgsmith.LockSource) (result OpenResult, token string, err error)
+		ResumeVault(ctx context.Context, name, passphrase string, source gpgsmith.LockSource, resume bool) (info SessionInfo, token string, err error)
+		SealVault(ctx context.Context, token, message string) (vault.Snapshot, error)
+		DiscardVault(ctx context.Context, token string) error
 		Snapshots(ctx context.Context, name string) ([]vault.Snapshot, error)
 		ImportVault(ctx context.Context, sourcePath, passphrase, targetName string) (vault.Snapshot, error)
-		CreateVault(ctx context.Context, name, path, passphrase string) (snap vault.Snapshot, session SessionInfo, err error)
+		CreateVault(ctx context.Context, name, path, passphrase string) (snap vault.Snapshot, session SessionInfo, token string, err error)
 		ExportVault(ctx context.Context, name, passphrase, targetDir string) (snapshotName string, err error)
 		TrustVault(ctx context.Context, name, fingerprint string) error
 
 		// ===== KeyService =====
 
-		CreateMasterKey(ctx context.Context, vaultName string, opts CreateKeyOpts) (masterFP string, subkeys []gpg.SubKey, err error)
-		GenerateSubkeys(ctx context.Context, vaultName string) ([]gpg.SubKey, error)
-		ListKeys(ctx context.Context, vaultName string) ([]gpg.SubKey, error)
-		RevokeSubkey(ctx context.Context, vaultName, keyID string) error
-		ExportKey(ctx context.Context, vaultName string) (target string, err error)
-		SSHPubKey(ctx context.Context, vaultName string) (path string, err error)
-		KeyStatus(ctx context.Context, vaultName string) (keys []gpg.SubKey, card *gpg.CardInfo, err error)
+		CreateMasterKey(ctx context.Context, token string, opts CreateKeyOpts) (masterFP string, subkeys []gpg.SubKey, err error)
+		GenerateSubkeys(ctx context.Context, token string) ([]gpg.SubKey, error)
+		ListKeys(ctx context.Context, token string) ([]gpg.SubKey, error)
+		RevokeSubkey(ctx context.Context, token, keyID string) error
+		ExportKey(ctx context.Context, token string) (target string, err error)
+		SSHPubKey(ctx context.Context, token string) (path string, err error)
+		KeyStatus(ctx context.Context, token string) (keys []gpg.SubKey, card *gpg.CardInfo, err error)
 
 		// ===== IdentityService =====
 
-		ListIdentities(ctx context.Context, vaultName string) ([]gpg.UID, error)
-		AddIdentity(ctx context.Context, vaultName, uid string) error
-		RevokeIdentity(ctx context.Context, vaultName, uid string) error
-		PrimaryIdentity(ctx context.Context, vaultName, uid string) error
+		ListIdentities(ctx context.Context, token string) ([]gpg.UID, error)
+		AddIdentity(ctx context.Context, token, uid string) error
+		RevokeIdentity(ctx context.Context, token, uid string) error
+		PrimaryIdentity(ctx context.Context, token, uid string) error
 
 		// ===== CardService =====
 
-		ProvisionCard(ctx context.Context, vaultName string, opts ProvisionCardOpts) (card gpg.YubiKeyEntry, sshPubkeyPath string, err error)
-		RotateCard(ctx context.Context, vaultName, label string) (gpg.YubiKeyEntry, error)
-		RevokeCard(ctx context.Context, vaultName, label string) error
-		CardInventory(ctx context.Context, vaultName string) ([]gpg.YubiKeyEntry, error)
-		DiscoverCard(ctx context.Context, vaultName, label, description string) (card gpg.YubiKeyEntry, alreadyKnown bool, err error)
+		ProvisionCard(ctx context.Context, token string, opts ProvisionCardOpts) (card gpg.YubiKeyEntry, sshPubkeyPath string, err error)
+		RotateCard(ctx context.Context, token, label string) (gpg.YubiKeyEntry, error)
+		RevokeCard(ctx context.Context, token, label string) error
+		CardInventory(ctx context.Context, token string) ([]gpg.YubiKeyEntry, error)
+		DiscoverCard(ctx context.Context, token, label, description string) (card gpg.YubiKeyEntry, alreadyKnown bool, err error)
 
 		// ===== ServerService =====
 
-		ListPublishServers(ctx context.Context, vaultName string) ([]gpg.ServerEntry, error)
-		AddPublishServer(ctx context.Context, vaultName, alias, url string) error
-		RemovePublishServer(ctx context.Context, vaultName, alias string) error
-		EnablePublishServer(ctx context.Context, vaultName, alias string) error
-		DisablePublishServer(ctx context.Context, vaultName, alias string) error
-		Publish(ctx context.Context, vaultName string, aliases []string) ([]PublishResult, error)
-		LookupPublished(ctx context.Context, vaultName string) ([]LookupResult, error)
+		ListPublishServers(ctx context.Context, token string) ([]gpg.ServerEntry, error)
+		AddPublishServer(ctx context.Context, token, alias, url string) error
+		RemovePublishServer(ctx context.Context, token, alias string) error
+		EnablePublishServer(ctx context.Context, token, alias string) error
+		DisablePublishServer(ctx context.Context, token, alias string) error
+		Publish(ctx context.Context, token string, aliases []string) ([]PublishResult, error)
+		LookupPublished(ctx context.Context, token string) ([]LookupResult, error)
 
 		// ===== AuditService =====
 
-		ShowAudit(ctx context.Context, vaultName string, last int) ([]audit.Entry, error)
+		ShowAudit(ctx context.Context, token string, last int) ([]audit.Entry, error)
 
 		// ===== EventService =====
 		//
-		// SubscribeEvents returns a channel of events for the given vault
-		// (or all vaults if vaultName is empty). The channel is closed when
-		// the passed context is canceled. The Backend is responsible for
-		// fan-out — multiple concurrent subscribers each get their own
-		// channel and see the same event sequence.
-		SubscribeEvents(ctx context.Context, vaultName string) (<-chan Event, error)
+		// SubscribeEvents returns a channel of events. If token is
+		// non-empty and matches an open session, only that vault's events
+		// are forwarded; if token is empty, the subscriber receives events
+		// for all vaults. The channel is closed when the passed context is
+		// canceled. The Backend is responsible for fan-out.
+		SubscribeEvents(ctx context.Context, token string) (<-chan Event, error)
 	}
 
 	// DaemonStatus is the response shape for DaemonService.Status, in
@@ -129,6 +143,13 @@ type (
 		SocketPath     string
 		StartedAt      time.Time
 		ActiveSessions int
+	}
+
+	// SessionTokenEntry pairs an opaque session token with its vault
+	// name. Used only by ListSessionTokens for local CLI auto-binding.
+	SessionTokenEntry struct {
+		Token     string
+		VaultName string
 	}
 
 	// SessionInfo describes one currently-open session held by the daemon,

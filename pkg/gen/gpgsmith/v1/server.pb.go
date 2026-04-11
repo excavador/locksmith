@@ -23,7 +23,6 @@ const (
 
 type ListServersRequest struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
-	VaultName     string                 `protobuf:"bytes,1,opt,name=vault_name,json=vaultName,proto3" json:"vault_name,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -56,13 +55,6 @@ func (x *ListServersRequest) ProtoReflect() protoreflect.Message {
 // Deprecated: Use ListServersRequest.ProtoReflect.Descriptor instead.
 func (*ListServersRequest) Descriptor() ([]byte, []int) {
 	return file_gpgsmith_v1_server_proto_rawDescGZIP(), []int{0}
-}
-
-func (x *ListServersRequest) GetVaultName() string {
-	if x != nil {
-		return x.VaultName
-	}
-	return ""
 }
 
 type ListServersResponse struct {
@@ -111,7 +103,6 @@ func (x *ListServersResponse) GetServers() []*PublishServer {
 
 type AddServerRequest struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
-	VaultName     string                 `protobuf:"bytes,1,opt,name=vault_name,json=vaultName,proto3" json:"vault_name,omitempty"`
 	Alias         string                 `protobuf:"bytes,2,opt,name=alias,proto3" json:"alias,omitempty"`
 	Url           string                 `protobuf:"bytes,3,opt,name=url,proto3" json:"url,omitempty"`
 	unknownFields protoimpl.UnknownFields
@@ -146,13 +137,6 @@ func (x *AddServerRequest) ProtoReflect() protoreflect.Message {
 // Deprecated: Use AddServerRequest.ProtoReflect.Descriptor instead.
 func (*AddServerRequest) Descriptor() ([]byte, []int) {
 	return file_gpgsmith_v1_server_proto_rawDescGZIP(), []int{2}
-}
-
-func (x *AddServerRequest) GetVaultName() string {
-	if x != nil {
-		return x.VaultName
-	}
-	return ""
 }
 
 func (x *AddServerRequest) GetAlias() string {
@@ -207,7 +191,6 @@ func (*AddServerResponse) Descriptor() ([]byte, []int) {
 
 type RemoveServerRequest struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
-	VaultName     string                 `protobuf:"bytes,1,opt,name=vault_name,json=vaultName,proto3" json:"vault_name,omitempty"`
 	Alias         string                 `protobuf:"bytes,2,opt,name=alias,proto3" json:"alias,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
@@ -241,13 +224,6 @@ func (x *RemoveServerRequest) ProtoReflect() protoreflect.Message {
 // Deprecated: Use RemoveServerRequest.ProtoReflect.Descriptor instead.
 func (*RemoveServerRequest) Descriptor() ([]byte, []int) {
 	return file_gpgsmith_v1_server_proto_rawDescGZIP(), []int{4}
-}
-
-func (x *RemoveServerRequest) GetVaultName() string {
-	if x != nil {
-		return x.VaultName
-	}
-	return ""
 }
 
 func (x *RemoveServerRequest) GetAlias() string {
@@ -295,7 +271,6 @@ func (*RemoveServerResponse) Descriptor() ([]byte, []int) {
 
 type EnableServerRequest struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
-	VaultName     string                 `protobuf:"bytes,1,opt,name=vault_name,json=vaultName,proto3" json:"vault_name,omitempty"`
 	Alias         string                 `protobuf:"bytes,2,opt,name=alias,proto3" json:"alias,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
@@ -329,13 +304,6 @@ func (x *EnableServerRequest) ProtoReflect() protoreflect.Message {
 // Deprecated: Use EnableServerRequest.ProtoReflect.Descriptor instead.
 func (*EnableServerRequest) Descriptor() ([]byte, []int) {
 	return file_gpgsmith_v1_server_proto_rawDescGZIP(), []int{6}
-}
-
-func (x *EnableServerRequest) GetVaultName() string {
-	if x != nil {
-		return x.VaultName
-	}
-	return ""
 }
 
 func (x *EnableServerRequest) GetAlias() string {
@@ -383,7 +351,6 @@ func (*EnableServerResponse) Descriptor() ([]byte, []int) {
 
 type DisableServerRequest struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
-	VaultName     string                 `protobuf:"bytes,1,opt,name=vault_name,json=vaultName,proto3" json:"vault_name,omitempty"`
 	Alias         string                 `protobuf:"bytes,2,opt,name=alias,proto3" json:"alias,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
@@ -417,13 +384,6 @@ func (x *DisableServerRequest) ProtoReflect() protoreflect.Message {
 // Deprecated: Use DisableServerRequest.ProtoReflect.Descriptor instead.
 func (*DisableServerRequest) Descriptor() ([]byte, []int) {
 	return file_gpgsmith_v1_server_proto_rawDescGZIP(), []int{8}
-}
-
-func (x *DisableServerRequest) GetVaultName() string {
-	if x != nil {
-		return x.VaultName
-	}
-	return ""
 }
 
 func (x *DisableServerRequest) GetAlias() string {
@@ -471,7 +431,6 @@ func (*DisableServerResponse) Descriptor() ([]byte, []int) {
 
 type PublishRequest struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
-	VaultName     string                 `protobuf:"bytes,1,opt,name=vault_name,json=vaultName,proto3" json:"vault_name,omitempty"`
 	Aliases       []string               `protobuf:"bytes,2,rep,name=aliases,proto3" json:"aliases,omitempty"` // empty = all enabled
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
@@ -505,13 +464,6 @@ func (x *PublishRequest) ProtoReflect() protoreflect.Message {
 // Deprecated: Use PublishRequest.ProtoReflect.Descriptor instead.
 func (*PublishRequest) Descriptor() ([]byte, []int) {
 	return file_gpgsmith_v1_server_proto_rawDescGZIP(), []int{10}
-}
-
-func (x *PublishRequest) GetVaultName() string {
-	if x != nil {
-		return x.VaultName
-	}
-	return ""
 }
 
 func (x *PublishRequest) GetAliases() []string {
@@ -627,7 +579,6 @@ func (x *PublishResult) GetError() string {
 
 type LookupRequest struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
-	VaultName     string                 `protobuf:"bytes,1,opt,name=vault_name,json=vaultName,proto3" json:"vault_name,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -660,13 +611,6 @@ func (x *LookupRequest) ProtoReflect() protoreflect.Message {
 // Deprecated: Use LookupRequest.ProtoReflect.Descriptor instead.
 func (*LookupRequest) Descriptor() ([]byte, []int) {
 	return file_gpgsmith_v1_server_proto_rawDescGZIP(), []int{13}
-}
-
-func (x *LookupRequest) GetVaultName() string {
-	if x != nil {
-		return x.VaultName
-	}
-	return ""
 }
 
 type LookupResponse struct {
@@ -769,46 +713,39 @@ var File_gpgsmith_v1_server_proto protoreflect.FileDescriptor
 
 const file_gpgsmith_v1_server_proto_rawDesc = "" +
 	"\n" +
-	"\x18gpgsmith/v1/server.proto\x12\vgpgsmith.v1\x1a\x18gpgsmith/v1/common.proto\"3\n" +
-	"\x12ListServersRequest\x12\x1d\n" +
-	"\n" +
-	"vault_name\x18\x01 \x01(\tR\tvaultName\"K\n" +
+	"\x18gpgsmith/v1/server.proto\x12\vgpgsmith.v1\x1a\x18gpgsmith/v1/common.proto\"&\n" +
+	"\x12ListServersRequestJ\x04\b\x01\x10\x02R\n" +
+	"vault_name\"K\n" +
 	"\x13ListServersResponse\x124\n" +
-	"\aservers\x18\x01 \x03(\v2\x1a.gpgsmith.v1.PublishServerR\aservers\"Y\n" +
-	"\x10AddServerRequest\x12\x1d\n" +
-	"\n" +
-	"vault_name\x18\x01 \x01(\tR\tvaultName\x12\x14\n" +
+	"\aservers\x18\x01 \x03(\v2\x1a.gpgsmith.v1.PublishServerR\aservers\"L\n" +
+	"\x10AddServerRequest\x12\x14\n" +
 	"\x05alias\x18\x02 \x01(\tR\x05alias\x12\x10\n" +
-	"\x03url\x18\x03 \x01(\tR\x03url\"\x13\n" +
-	"\x11AddServerResponse\"J\n" +
-	"\x13RemoveServerRequest\x12\x1d\n" +
-	"\n" +
-	"vault_name\x18\x01 \x01(\tR\tvaultName\x12\x14\n" +
-	"\x05alias\x18\x02 \x01(\tR\x05alias\"\x16\n" +
-	"\x14RemoveServerResponse\"J\n" +
-	"\x13EnableServerRequest\x12\x1d\n" +
-	"\n" +
-	"vault_name\x18\x01 \x01(\tR\tvaultName\x12\x14\n" +
-	"\x05alias\x18\x02 \x01(\tR\x05alias\"\x16\n" +
-	"\x14EnableServerResponse\"K\n" +
-	"\x14DisableServerRequest\x12\x1d\n" +
-	"\n" +
-	"vault_name\x18\x01 \x01(\tR\tvaultName\x12\x14\n" +
-	"\x05alias\x18\x02 \x01(\tR\x05alias\"\x17\n" +
-	"\x15DisableServerResponse\"I\n" +
-	"\x0ePublishRequest\x12\x1d\n" +
-	"\n" +
-	"vault_name\x18\x01 \x01(\tR\tvaultName\x12\x18\n" +
-	"\aaliases\x18\x02 \x03(\tR\aaliases\"G\n" +
+	"\x03url\x18\x03 \x01(\tR\x03urlJ\x04\b\x01\x10\x02R\n" +
+	"vault_name\"\x13\n" +
+	"\x11AddServerResponse\"=\n" +
+	"\x13RemoveServerRequest\x12\x14\n" +
+	"\x05alias\x18\x02 \x01(\tR\x05aliasJ\x04\b\x01\x10\x02R\n" +
+	"vault_name\"\x16\n" +
+	"\x14RemoveServerResponse\"=\n" +
+	"\x13EnableServerRequest\x12\x14\n" +
+	"\x05alias\x18\x02 \x01(\tR\x05aliasJ\x04\b\x01\x10\x02R\n" +
+	"vault_name\"\x16\n" +
+	"\x14EnableServerResponse\">\n" +
+	"\x14DisableServerRequest\x12\x14\n" +
+	"\x05alias\x18\x02 \x01(\tR\x05aliasJ\x04\b\x01\x10\x02R\n" +
+	"vault_name\"\x17\n" +
+	"\x15DisableServerResponse\"<\n" +
+	"\x0ePublishRequest\x12\x18\n" +
+	"\aaliases\x18\x02 \x03(\tR\aaliasesJ\x04\b\x01\x10\x02R\n" +
+	"vault_name\"G\n" +
 	"\x0fPublishResponse\x124\n" +
 	"\aresults\x18\x01 \x03(\v2\x1a.gpgsmith.v1.PublishResultR\aresults\"U\n" +
 	"\rPublishResult\x12\x14\n" +
 	"\x05alias\x18\x01 \x01(\tR\x05alias\x12\x18\n" +
 	"\asuccess\x18\x02 \x01(\bR\asuccess\x12\x14\n" +
-	"\x05error\x18\x03 \x01(\tR\x05error\".\n" +
-	"\rLookupRequest\x12\x1d\n" +
-	"\n" +
-	"vault_name\x18\x01 \x01(\tR\tvaultName\"E\n" +
+	"\x05error\x18\x03 \x01(\tR\x05error\"!\n" +
+	"\rLookupRequestJ\x04\b\x01\x10\x02R\n" +
+	"vault_name\"E\n" +
 	"\x0eLookupResponse\x123\n" +
 	"\aresults\x18\x01 \x03(\v2\x19.gpgsmith.v1.LookupResultR\aresults\"8\n" +
 	"\fLookupResult\x12\x10\n" +

@@ -1,0 +1,31 @@
+{{define "identities"}}
+{{template "header" .}}
+<h2>Identities</h2>
+{{- if not .Identities.Identities}}
+<p class="empty">No identities on the master key.</p>
+{{- else}}
+<table>
+    <thead>
+        <tr>
+            <th>#</th>
+            <th>Status</th>
+            <th>Created</th>
+            <th>Revoked</th>
+            <th>Identity</th>
+        </tr>
+    </thead>
+    <tbody>
+        {{- range .Identities.Identities}}
+        <tr>
+            <td>{{.Index}}</td>
+            <td>{{template "dash" .Status}}</td>
+            <td>{{template "dash" .Created}}</td>
+            <td>{{template "dash" .Revoked}}</td>
+            <td>{{.UID}}</td>
+        </tr>
+        {{- end}}
+    </tbody>
+</table>
+{{- end}}
+{{template "footer" .}}
+{{end}}

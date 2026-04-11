@@ -84,6 +84,12 @@ gpgsmith runs as a background daemon that holds open vaults in memory.
 Every CLI command talks to the daemon over a per-user Unix socket, so
 commands that follow a `vault open` are sub-millisecond RPCs.
 
+Each open vault is a **session** identified by an opaque token. The CLI
+binds your terminal to a session by spawning a subshell with
+`GPGSMITH_SESSION=<token>` set in its environment; the web UI binds a
+browser tab to a session via an HttpOnly cookie. A daemon may hold many
+sessions at once; each auto-seals after 5 minutes of idle time.
+
 ### 1. First-time setup (new keys) -- recommended
 
 ```bash
@@ -98,14 +104,23 @@ gpgsmith vault seal --message "initial setup"   # save the new snapshot
 ### 2. Open and work with a vault
 
 ```bash
-gpgsmith vault open work                        # prompts for passphrase
-gpgsmith keys list                              # against the open session
-gpgsmith card provision green
-gpgsmith vault seal --message "provisioned green"
+$ gpgsmith vault open work                        # prompts for passphrase
+Vault passphrase:
+opened work as session 7f3a... (5 min idle timeout)
+[gpgsmith:work] $ gpgsmith keys list              # subshell has GPGSMITH_SESSION set
+[gpgsmith:work] $ gpgsmith card provision green
+[gpgsmith:work] $ gpgsmith vault seal --message "provisioned green"
+[gpgsmith:work] $ exit                            # back to your normal shell
 ```
 
-The session lives in the daemon. You do not get a subshell, and
-`GNUPGHOME` is not exported into your shell environment.
+`gpgsmith vault open` spawns a child `$SHELL` (bash, zsh — fish falls back
+to sh) with the session token in its environment. Inside the subshell
+every `gpgsmith` invocation automatically targets the bound session.
+Exiting the subshell returns to your parent shell; the daemon keeps the
+session in memory until its 5-minute idle timer fires.
+
+For scripted use: `eval "$(gpgsmith vault open --no-shell work)"` prints
+`export GPGSMITH_SESSION=...` to stdout instead of spawning a subshell.
 
 ### 3. Import an existing GNUPGHOME
 
@@ -114,31 +129,31 @@ gpgsmith vault create work                      # creates registry entry + empty
 gpgsmith vault import ~/.gnupg --name work      # seals ~/.gnupg as a snapshot
 ```
 
+All examples below assume you've already run `gpgsmith vault open work`
+and are inside the resulting `[gpgsmith:work] $` subshell.
+
 ### 4. Discover existing YubiKeys
 
 ```bash
-gpgsmith vault open work
-gpgsmith card discover                          # detect connected YubiKey
-gpgsmith vault seal --message "added card to inventory"
+[gpgsmith:work] $ gpgsmith card discover         # detect connected YubiKey
+[gpgsmith:work] $ gpgsmith vault seal --message "added card to inventory"
 ```
 
 ### 5. Rotate subkeys
 
 ```bash
-gpgsmith vault open work
-gpgsmith card rotate green                      # revoke old + generate new + to-card + publish + ssh
-gpgsmith vault seal --message "rotated subkeys 2026"
+[gpgsmith:work] $ gpgsmith card rotate green     # revoke old + new + to-card + publish + ssh
+[gpgsmith:work] $ gpgsmith vault seal --message "rotated subkeys 2026"
 ```
 
 ### 6. Manage identities (add/revoke email, change primary)
 
 ```bash
-gpgsmith vault open work
-gpgsmith keys identity list
-gpgsmith keys identity add "Your Name <new@example.com>"
-gpgsmith keys identity primary 2                 # 1-based index
-gpgsmith keys identity revoke "Your Name <old@example.com>"
-gpgsmith vault seal --message "identity changes"
+[gpgsmith:work] $ gpgsmith keys identity list
+[gpgsmith:work] $ gpgsmith keys identity add "Your Name <new@example.com>"
+[gpgsmith:work] $ gpgsmith keys identity primary 2     # 1-based index
+[gpgsmith:work] $ gpgsmith keys identity revoke "Your Name <old@example.com>"
+[gpgsmith:work] $ gpgsmith vault seal --message "identity changes"
 ```
 
 Every mutation is captured in the audit log and auto-republished to enabled servers.
@@ -148,13 +163,26 @@ Every mutation is captured in the audit log and auto-republished to enabled serv
 
 ```bash
 gpgsmith vault status                           # which vaults does the daemon hold?
-gpgsmith vault open work
-gpgsmith card inventory
-gpgsmith audit show --last 10
-gpgsmith vault discard                          # end session without sealing
+[gpgsmith:work] $ gpgsmith card inventory
+[gpgsmith:work] $ gpgsmith audit show --last 10
+[gpgsmith:work] $ gpgsmith vault discard        # end session without sealing
 ```
 
-### 8. Controlling the daemon explicitly
+### 8. Browse the vault from a web browser
+
+```bash
+gpgsmith webui                                  # auto-spawns daemon, opens browser
+# logs: gpgsmith web UI: http://127.0.0.1:41753/?t=<startup-token>
+```
+
+`gpgsmith webui` starts a loopback-only HTTP server (random port), prints
+a single-use URL containing a startup token, and (with `--open`) launches
+your default browser. The startup token is exchanged for an HttpOnly,
+SameSite=Strict cookie scoped to the loopback host; each browser tab is
+its own independent session. Pages: vault dashboard (open / discard),
+keys, identities, cards, servers, audit log. Read-only for the v0.5.0 MVP.
+
+### 9. Controlling the daemon explicitly
 
 ```bash
 gpgsmith daemon status                          # is it running?
@@ -175,16 +203,16 @@ gpgsmith
 ├── setup                           first-time wizard: vault create + keys create
 ├── vault                           manage encrypted vaults
 │   ├── list                        list all configured vaults from the registry
-│   ├── status                      show which vaults are open (+ recoverable ephemerals)
+│   ├── status                      show which sessions are open (+ recoverable ephemerals)
 │   ├── create <name>               create a new vault entry + empty initial snapshot
-│   ├── open <name>                 open a vault by name (passphrase prompt)
-│   ├── seal [<name>]               seal an open vault (auto if exactly one open)
-│   ├── discard [<name>]            discard an open vault without sealing
-│   ├── snapshots [<name>]          list canonical snapshots of a vault
+│   ├── open <name> [--no-shell]    open a vault and spawn a bound subshell
+│   ├── seal                        seal the bound session
+│   ├── discard                     discard the bound session without sealing
+│   ├── snapshots <name>            list canonical snapshots of a vault
 │   ├── import <path>               encrypt an existing GNUPGHOME as a new snapshot
 │   ├── export <name> <target>      decrypt the latest snapshot to a target dir
 │   └── trust <name> <fp>           update the TOFU trust anchor after a rotation
-├── keys                            GPG key operations (against the open session)
+├── keys                            GPG key operations (against the bound session)
 │   ├── create                      generate new master key and subkeys
 │   ├── generate                    add new S/E/A subkeys
 │   ├── list                        list keys and subkeys
@@ -209,6 +237,7 @@ gpgsmith
 │   └── lookup
 ├── audit
 │   └── show [--last N]
+├── webui [--bind] [--open]         start the loopback-only web UI
 └── version                         show version information
 ```
 
@@ -217,15 +246,17 @@ gpgsmith
 `keys` commands are low-level building blocks. `card` commands are high-level
 workflows that compose `keys` operations internally.
 
-All session-bearing commands (`keys`, `card`, `server`, `audit`) operate on
-an open vault held by the daemon. When zero or two-plus vaults are open,
-pass `--vault <name>` on the root command.
+Every session-bearing command (`keys`, `card`, `server`, `audit`, `vault seal`,
+`vault discard`) targets the session identified by `GPGSMITH_SESSION` in your
+environment. `gpgsmith vault open` sets that variable for you by spawning a
+subshell. If you invoke a session-bearing command from a terminal where
+`GPGSMITH_SESSION` is unset and the daemon has exactly one open session, the
+CLI auto-binds to it.
 
 ### Global flags
 
 | Flag | Default | Description |
 |------|---------|-------------|
-| `--vault` | auto | Select a vault by name from the registry |
 | `--vault-dir` | _(unset)_ | Override vault directory (ignores the registry; useful for tests) |
 | `--verbose` | `false` | Debug logging to stderr |
 | `--dry-run` | `false` | Print commands without executing |
@@ -335,31 +366,72 @@ private keys never touch disk. On macOS, `os.TempDir()` is used (per-user
 `/var/folders/...`). Permissions are set to `0700`. Signal handlers clean up on
 interrupt.
 
-## Interactive vs Scripted Mode
+## Sessions, terminals, and tabs
 
-gpgsmith follows the **ssh-agent pattern** for session management.
+gpgsmith follows the **gpg-agent / ssh-agent pattern**: a long-running
+daemon owns the decrypted vaults; thin clients (CLI, web UI, future TUI)
+attach to a session via an opaque token.
 
-### Daemon-backed sessions
+### Sessions are token-bound
 
-Opening a vault hands the decrypted session to the background daemon,
-which holds it in memory across many client RPCs. The CLI does not
-spawn a subshell and does not export `GNUPGHOME` into your shell:
+Every `gpgsmith vault open` creates an independent session: the daemon
+decrypts the latest snapshot into `/dev/shm` (Linux) or the temp dir
+(macOS), spawns its own gpg-agent + scdaemon pair, mints a 64-character
+hex token, and returns it to the client. Two `gpgsmith vault open work`
+calls in two terminals produce two separate sessions with two separate
+workdirs and two separate tokens — they do not share state.
+
+### CLI: subshell binding
 
 ```bash
 $ gpgsmith vault open work
 Vault passphrase:
-opened work
-
-$ gpgsmith card rotate green            # runs against the daemon-held session
-$ gpgsmith vault seal --message "rotated subkeys"
-sealed work: 2026-04-01T153000Z_rotated-subkeys.tar.age
+opened work as session 7f3a... (5 min idle timeout)
+[gpgsmith:work] $ gpgsmith keys list      # GPGSMITH_SESSION is set in this subshell
+[gpgsmith:work] $ exit                    # back to the parent shell
 ```
 
-If the daemon is not already running, any CLI command auto-spawns it
-as a detached child, so explicit `gpgsmith daemon start` is optional.
-After 5 minutes of idle time the daemon flushes the session to the
-encrypted ephemeral file pair on disk; the next `vault open` on the
-same vault offers to resume or discard.
+The subshell is `$SHELL` (bash, zsh — fish falls back to sh) with a
+small generated rc file that prepends `[gpgsmith:<vault>]` to your
+prompt. Inside the subshell every `gpgsmith` invocation reads
+`GPGSMITH_SESSION` from the environment and sends it to the daemon as
+the `Gpgsmith-Session` HTTP header. Exit the subshell to release the
+binding from your terminal; the daemon keeps the session open until its
+5-minute idle timer fires.
+
+For scripted use, `gpgsmith vault open --no-shell work` prints
+`export GPGSMITH_SESSION=...` to stdout for `eval $(...)`.
+
+### Web UI: cookie binding
+
+`gpgsmith webui` starts a loopback-only HTTP server that binds each
+browser tab to a session via an HttpOnly + SameSite=Strict cookie. The
+URL printed at startup carries a one-shot startup token; visiting it
+exchanges the token for a per-tab cookie and redirects to the bare URL.
+A tab opens its own session (with passphrase) from the dashboard;
+closing the tab releases the binding (the daemon's idle timer eventually
+sweeps the session). Multi-tab is supported — each tab is independent.
+
+### Auto-bind fallback
+
+When you invoke a session-bearing CLI command without `GPGSMITH_SESSION`
+set and the daemon has exactly one open session, the CLI auto-binds to
+that session. With zero or two-plus open sessions, the CLI errors and
+asks you to either `gpgsmith vault open <name>` or set the env var
+explicitly.
+
+### Idle auto-seal
+
+Each session has its own 5-minute idle timer. After expiry the daemon
+flushes the workdir to an encrypted `.session-<host>` file pair on disk
+and drops the in-memory state. The next `vault open` for the same vault
+detects the ephemeral and offers to resume or discard.
+
+### Daemon auto-spawn
+
+If the daemon is not running, any CLI command (or `gpgsmith webui`)
+auto-spawns it as a detached child. Explicit `gpgsmith daemon start` is
+optional.
 
 ## Configuration
 
@@ -422,9 +494,14 @@ servers:
 2. Config files (vault config + GPG config after open)
 3. CLI flags
 
-No environment variables for configuration. Session state (decrypted
-GNUPGHOME path, passphrase, open-vault map) lives in the daemon process,
-not in client-shell environment variables.
+No environment variables for configuration itself. Session state
+(decrypted GNUPGHOME path, vault passphrase) lives entirely in the
+daemon process. The CLI uses **one** environment variable —
+`GPGSMITH_SESSION` — as a per-terminal selector pointing at one of the
+daemon's open sessions; it carries an opaque token, never the
+passphrase. The web UI uses an HttpOnly cookie for the equivalent
+per-tab selector. Both are set automatically by `gpgsmith vault open`
+and `gpgsmith webui`.
 
 ## Project Structure
 
@@ -436,10 +513,11 @@ locksmith/
 │   ├── audit/             audit logging, shared
 │   ├── gpg/               GPG operations, inventory, card management
 │   ├── gpgsmith/          session type, TOFU trust, process hardening
-│   ├── daemon/            long-running daemon: open-vault map, idle auto-seal
-│   ├── wire/              ConnectRPC adapter (server + client over UDS/h2c)
+│   ├── daemon/            long-running daemon: token-keyed session map, idle auto-seal
+│   ├── wire/              ConnectRPC adapter (server + client over UDS/h2c, session header)
 │   ├── gen/               buf-generated protobuf + ConnectRPC stubs
-│   └── cli/gpgsmith/      CLI wiring (urfave/cli/v3), thin daemon client
+│   ├── cli/gpgsmith/      CLI wiring (urfave/cli/v3), thin daemon client + subshell wrapping
+│   └── webui/gpgsmith/    loopback-only HTTP frontend (html/template + HTMX, embedded assets)
 ├── proto/                 protobuf schema (buf-managed)
 ├── testdata/              fixtures for GPG output parsing
 ├── Justfile               build/test/lint commands

@@ -23,7 +23,6 @@ const (
 
 type ListIdentitiesRequest struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
-	VaultName     string                 `protobuf:"bytes,1,opt,name=vault_name,json=vaultName,proto3" json:"vault_name,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -56,13 +55,6 @@ func (x *ListIdentitiesRequest) ProtoReflect() protoreflect.Message {
 // Deprecated: Use ListIdentitiesRequest.ProtoReflect.Descriptor instead.
 func (*ListIdentitiesRequest) Descriptor() ([]byte, []int) {
 	return file_gpgsmith_v1_identity_proto_rawDescGZIP(), []int{0}
-}
-
-func (x *ListIdentitiesRequest) GetVaultName() string {
-	if x != nil {
-		return x.VaultName
-	}
-	return ""
 }
 
 type ListIdentitiesResponse struct {
@@ -111,7 +103,6 @@ func (x *ListIdentitiesResponse) GetIdentities() []*Identity {
 
 type AddIdentityRequest struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
-	VaultName     string                 `protobuf:"bytes,1,opt,name=vault_name,json=vaultName,proto3" json:"vault_name,omitempty"`
 	Uid           string                 `protobuf:"bytes,2,opt,name=uid,proto3" json:"uid,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
@@ -145,13 +136,6 @@ func (x *AddIdentityRequest) ProtoReflect() protoreflect.Message {
 // Deprecated: Use AddIdentityRequest.ProtoReflect.Descriptor instead.
 func (*AddIdentityRequest) Descriptor() ([]byte, []int) {
 	return file_gpgsmith_v1_identity_proto_rawDescGZIP(), []int{2}
-}
-
-func (x *AddIdentityRequest) GetVaultName() string {
-	if x != nil {
-		return x.VaultName
-	}
-	return ""
 }
 
 func (x *AddIdentityRequest) GetUid() string {
@@ -199,7 +183,6 @@ func (*AddIdentityResponse) Descriptor() ([]byte, []int) {
 
 type RevokeIdentityRequest struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
-	VaultName     string                 `protobuf:"bytes,1,opt,name=vault_name,json=vaultName,proto3" json:"vault_name,omitempty"`
 	Uid           string                 `protobuf:"bytes,2,opt,name=uid,proto3" json:"uid,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
@@ -233,13 +216,6 @@ func (x *RevokeIdentityRequest) ProtoReflect() protoreflect.Message {
 // Deprecated: Use RevokeIdentityRequest.ProtoReflect.Descriptor instead.
 func (*RevokeIdentityRequest) Descriptor() ([]byte, []int) {
 	return file_gpgsmith_v1_identity_proto_rawDescGZIP(), []int{4}
-}
-
-func (x *RevokeIdentityRequest) GetVaultName() string {
-	if x != nil {
-		return x.VaultName
-	}
-	return ""
 }
 
 func (x *RevokeIdentityRequest) GetUid() string {
@@ -287,7 +263,6 @@ func (*RevokeIdentityResponse) Descriptor() ([]byte, []int) {
 
 type PrimaryIdentityRequest struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
-	VaultName     string                 `protobuf:"bytes,1,opt,name=vault_name,json=vaultName,proto3" json:"vault_name,omitempty"`
 	Uid           string                 `protobuf:"bytes,2,opt,name=uid,proto3" json:"uid,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
@@ -321,13 +296,6 @@ func (x *PrimaryIdentityRequest) ProtoReflect() protoreflect.Message {
 // Deprecated: Use PrimaryIdentityRequest.ProtoReflect.Descriptor instead.
 func (*PrimaryIdentityRequest) Descriptor() ([]byte, []int) {
 	return file_gpgsmith_v1_identity_proto_rawDescGZIP(), []int{6}
-}
-
-func (x *PrimaryIdentityRequest) GetVaultName() string {
-	if x != nil {
-		return x.VaultName
-	}
-	return ""
 }
 
 func (x *PrimaryIdentityRequest) GetUid() string {
@@ -377,28 +345,24 @@ var File_gpgsmith_v1_identity_proto protoreflect.FileDescriptor
 
 const file_gpgsmith_v1_identity_proto_rawDesc = "" +
 	"\n" +
-	"\x1agpgsmith/v1/identity.proto\x12\vgpgsmith.v1\x1a\x18gpgsmith/v1/common.proto\"6\n" +
-	"\x15ListIdentitiesRequest\x12\x1d\n" +
-	"\n" +
-	"vault_name\x18\x01 \x01(\tR\tvaultName\"O\n" +
+	"\x1agpgsmith/v1/identity.proto\x12\vgpgsmith.v1\x1a\x18gpgsmith/v1/common.proto\")\n" +
+	"\x15ListIdentitiesRequestJ\x04\b\x01\x10\x02R\n" +
+	"vault_name\"O\n" +
 	"\x16ListIdentitiesResponse\x125\n" +
 	"\n" +
 	"identities\x18\x01 \x03(\v2\x15.gpgsmith.v1.IdentityR\n" +
-	"identities\"E\n" +
-	"\x12AddIdentityRequest\x12\x1d\n" +
-	"\n" +
-	"vault_name\x18\x01 \x01(\tR\tvaultName\x12\x10\n" +
-	"\x03uid\x18\x02 \x01(\tR\x03uid\"\x15\n" +
-	"\x13AddIdentityResponse\"H\n" +
-	"\x15RevokeIdentityRequest\x12\x1d\n" +
-	"\n" +
-	"vault_name\x18\x01 \x01(\tR\tvaultName\x12\x10\n" +
-	"\x03uid\x18\x02 \x01(\tR\x03uid\"\x18\n" +
-	"\x16RevokeIdentityResponse\"I\n" +
-	"\x16PrimaryIdentityRequest\x12\x1d\n" +
-	"\n" +
-	"vault_name\x18\x01 \x01(\tR\tvaultName\x12\x10\n" +
-	"\x03uid\x18\x02 \x01(\tR\x03uid\"\x19\n" +
+	"identities\"8\n" +
+	"\x12AddIdentityRequest\x12\x10\n" +
+	"\x03uid\x18\x02 \x01(\tR\x03uidJ\x04\b\x01\x10\x02R\n" +
+	"vault_name\"\x15\n" +
+	"\x13AddIdentityResponse\";\n" +
+	"\x15RevokeIdentityRequest\x12\x10\n" +
+	"\x03uid\x18\x02 \x01(\tR\x03uidJ\x04\b\x01\x10\x02R\n" +
+	"vault_name\"\x18\n" +
+	"\x16RevokeIdentityResponse\"<\n" +
+	"\x16PrimaryIdentityRequest\x12\x10\n" +
+	"\x03uid\x18\x02 \x01(\tR\x03uidJ\x04\b\x01\x10\x02R\n" +
+	"vault_name\"\x19\n" +
 	"\x17PrimaryIdentityResponse2\xd5\x02\n" +
 	"\x0fIdentityService\x12O\n" +
 	"\x04List\x12\".gpgsmith.v1.ListIdentitiesRequest\x1a#.gpgsmith.v1.ListIdentitiesResponse\x12H\n" +

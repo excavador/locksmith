@@ -36,14 +36,12 @@ func auditShow(ctx context.Context, cmd *cli.Command) error {
 	}
 	defer client.Close()
 
-	vaultName, err := resolveVaultName(ctx, client, cmd)
-	if err != nil {
+	if err := ensureSessionToken(ctx, client); err != nil {
 		return fmt.Errorf("audit show: %w", err)
 	}
 
 	resp, err := client.Audit.Show(ctx, connect.NewRequest(&v1.ShowRequest{
-		VaultName: vaultName,
-		Last:      int32(cmd.Int("last")), //nolint:gosec // user-supplied, bounded by int32 proto field
+		Last: int32(cmd.Int("last")), //nolint:gosec // user-supplied, bounded by int32 proto field
 	}))
 	if err != nil {
 		return fmt.Errorf("audit show: %w", err)

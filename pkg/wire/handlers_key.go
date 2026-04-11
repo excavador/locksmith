@@ -21,7 +21,11 @@ func newKeyHandler(b Backend) *keyHandler {
 }
 
 func (h *keyHandler) Create(ctx context.Context, req *connect.Request[v1.CreateRequest]) (*connect.Response[v1.CreateResponse], error) {
-	fp, subkeys, err := h.backend.CreateMasterKey(ctx, req.Msg.VaultName, CreateKeyOpts{
+	token, ok := TokenFromContext(ctx)
+	if !ok {
+		return nil, errMissingSessionToken()
+	}
+	fp, subkeys, err := h.backend.CreateMasterKey(ctx, token, CreateKeyOpts{
 		Name:         req.Msg.Name,
 		Email:        req.Msg.Email,
 		Algo:         req.Msg.Algo,
@@ -38,8 +42,12 @@ func (h *keyHandler) Create(ctx context.Context, req *connect.Request[v1.CreateR
 	}), nil
 }
 
-func (h *keyHandler) Generate(ctx context.Context, req *connect.Request[v1.GenerateRequest]) (*connect.Response[v1.GenerateResponse], error) {
-	subkeys, err := h.backend.GenerateSubkeys(ctx, req.Msg.VaultName)
+func (h *keyHandler) Generate(ctx context.Context, _ *connect.Request[v1.GenerateRequest]) (*connect.Response[v1.GenerateResponse], error) {
+	token, ok := TokenFromContext(ctx)
+	if !ok {
+		return nil, errMissingSessionToken()
+	}
+	subkeys, err := h.backend.GenerateSubkeys(ctx, token)
 	if err != nil {
 		return nil, connectErr(err)
 	}
@@ -48,8 +56,12 @@ func (h *keyHandler) Generate(ctx context.Context, req *connect.Request[v1.Gener
 	}), nil
 }
 
-func (h *keyHandler) List(ctx context.Context, req *connect.Request[v1.ListKeysRequest]) (*connect.Response[v1.ListKeysResponse], error) {
-	keys, err := h.backend.ListKeys(ctx, req.Msg.VaultName)
+func (h *keyHandler) List(ctx context.Context, _ *connect.Request[v1.ListKeysRequest]) (*connect.Response[v1.ListKeysResponse], error) {
+	token, ok := TokenFromContext(ctx)
+	if !ok {
+		return nil, errMissingSessionToken()
+	}
+	keys, err := h.backend.ListKeys(ctx, token)
 	if err != nil {
 		return nil, connectErr(err)
 	}
@@ -59,30 +71,46 @@ func (h *keyHandler) List(ctx context.Context, req *connect.Request[v1.ListKeysR
 }
 
 func (h *keyHandler) Revoke(ctx context.Context, req *connect.Request[v1.RevokeRequest]) (*connect.Response[v1.RevokeResponse], error) {
-	if err := h.backend.RevokeSubkey(ctx, req.Msg.VaultName, req.Msg.KeyId); err != nil {
+	token, ok := TokenFromContext(ctx)
+	if !ok {
+		return nil, errMissingSessionToken()
+	}
+	if err := h.backend.RevokeSubkey(ctx, token, req.Msg.KeyId); err != nil {
 		return nil, connectErr(err)
 	}
 	return connect.NewResponse(&v1.RevokeResponse{}), nil
 }
 
-func (h *keyHandler) Export(ctx context.Context, req *connect.Request[v1.ExportKeyRequest]) (*connect.Response[v1.ExportKeyResponse], error) {
-	target, err := h.backend.ExportKey(ctx, req.Msg.VaultName)
+func (h *keyHandler) Export(ctx context.Context, _ *connect.Request[v1.ExportKeyRequest]) (*connect.Response[v1.ExportKeyResponse], error) {
+	token, ok := TokenFromContext(ctx)
+	if !ok {
+		return nil, errMissingSessionToken()
+	}
+	target, err := h.backend.ExportKey(ctx, token)
 	if err != nil {
 		return nil, connectErr(err)
 	}
 	return connect.NewResponse(&v1.ExportKeyResponse{Target: target}), nil
 }
 
-func (h *keyHandler) SSHPubKey(ctx context.Context, req *connect.Request[v1.SSHPubKeyRequest]) (*connect.Response[v1.SSHPubKeyResponse], error) {
-	path, err := h.backend.SSHPubKey(ctx, req.Msg.VaultName)
+func (h *keyHandler) SSHPubKey(ctx context.Context, _ *connect.Request[v1.SSHPubKeyRequest]) (*connect.Response[v1.SSHPubKeyResponse], error) {
+	token, ok := TokenFromContext(ctx)
+	if !ok {
+		return nil, errMissingSessionToken()
+	}
+	path, err := h.backend.SSHPubKey(ctx, token)
 	if err != nil {
 		return nil, connectErr(err)
 	}
 	return connect.NewResponse(&v1.SSHPubKeyResponse{Path: path}), nil
 }
 
-func (h *keyHandler) Status(ctx context.Context, req *connect.Request[v1.KeyStatusRequest]) (*connect.Response[v1.KeyStatusResponse], error) {
-	keys, card, err := h.backend.KeyStatus(ctx, req.Msg.VaultName)
+func (h *keyHandler) Status(ctx context.Context, _ *connect.Request[v1.KeyStatusRequest]) (*connect.Response[v1.KeyStatusResponse], error) {
+	token, ok := TokenFromContext(ctx)
+	if !ok {
+		return nil, errMissingSessionToken()
+	}
+	keys, card, err := h.backend.KeyStatus(ctx, token)
 	if err != nil {
 		return nil, connectErr(err)
 	}
@@ -90,9 +118,6 @@ func (h *keyHandler) Status(ctx context.Context, req *connect.Request[v1.KeyStat
 		Keys: toProtoSubKeys(keys),
 	}
 	if card != nil {
-		// CardStatus returns a *gpg.CardInfo (not a YubiKeyEntry); the proto
-		// CardInfo type happens to overlap on the basic fields. We populate
-		// only what makes sense from a CardStatus query.
 		resp.Card = &v1.CardInfo{
 			Serial: card.Serial,
 			Model:  card.Model,

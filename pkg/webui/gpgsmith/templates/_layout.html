@@ -1,0 +1,37 @@
+{{define "header"}}<!doctype html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>{{.Title}} — gpgsmith</title>
+    <link rel="stylesheet" href="/static/style.css">
+    <script src="/static/htmx.min.js" defer></script>
+</head>
+<body>
+<header class="navbar">
+    <h1><a href="/">gpgsmith</a></h1>
+    {{- if .VaultName}}
+    <span>vault: <code>{{.VaultName}}</code></span>
+    <a href="/vault/{{.VaultName}}/keys">keys</a>
+    <a href="/vault/{{.VaultName}}/identities">identities</a>
+    <a href="/vault/{{.VaultName}}/cards">cards</a>
+    <a href="/vault/{{.VaultName}}/servers">servers</a>
+    <a href="/vault/{{.VaultName}}/audit">audit</a>
+    <form class="inline" method="post" action="/vault/{{.VaultName}}/discard">
+        <button class="secondary" type="submit">discard</button>
+    </form>
+    {{- end}}
+</header>
+<main class="container">
+    {{- if .Error}}
+    <div class="alert">{{.Error}}</div>
+    {{- end}}
+{{end}}
+
+{{define "footer"}}
+</main>
+</body>
+</html>
+{{end}}
+
+{{define "dash"}}{{if .}}{{.}}{{else}}-{{end}}{{end}}

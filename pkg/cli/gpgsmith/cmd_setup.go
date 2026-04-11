@@ -10,6 +10,7 @@ import (
 	"github.com/urfave/cli/v3"
 
 	v1 "github.com/excavador/locksmith/pkg/gen/gpgsmith/v1"
+	"github.com/excavador/locksmith/pkg/wire"
 )
 
 func setupCmd() *cli.Command {
@@ -89,9 +90,16 @@ func setup(ctx context.Context, cmd *cli.Command) error {
 	}
 	fmt.Fprintf(os.Stderr, "  created %s (%s)\n", vaultName, filepath.Base(createResp.Msg.GetSnapshot().GetFilename()))
 
+	// Bind the newly-minted session token into this process's env so
+	// the outbound interceptor stamps it onto the follow-up Key.Create
+	// RPC below.
+	if tok := createResp.Msg.GetToken(); tok != "" {
+		_ = os.Setenv(wire.SessionEnvVar, tok)
+		_ = os.Setenv(wire.SessionVaultNameEnvVar, vaultName)
+	}
+
 	fmt.Fprintln(os.Stderr, "\n[2/2] Generating GPG keys...")
 	keyResp, err := client.Key.Create(ctx, connect.NewRequest(&v1.CreateRequest{
-		VaultName:    vaultName,
 		Name:         name,
 		Email:        email,
 		Algo:         cmd.String("algo"),

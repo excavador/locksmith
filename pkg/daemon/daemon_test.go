@@ -127,7 +127,7 @@ func TestDaemonOpenSealCycle(t *testing.T) {
 
 	ctx := context.Background()
 
-	res, err := d.OpenVault(ctx, name, testPassphrase, gpgsmith.LockSourceCLI)
+	res, token, err := d.OpenVault(ctx, name, testPassphrase, gpgsmith.LockSourceCLI)
 	if err != nil {
 		t.Fatalf("OpenVault: %v", err)
 	}
@@ -137,13 +137,16 @@ func TestDaemonOpenSealCycle(t *testing.T) {
 	if res.Session.VaultName != name {
 		t.Errorf("VaultName = %q", res.Session.VaultName)
 	}
+	if token == "" {
+		t.Errorf("OpenVault returned empty token")
+	}
 
 	sessions, err := d.ListSessions(ctx)
 	if err != nil || len(sessions) != 1 {
 		t.Fatalf("ListSessions: %v, %d", err, len(sessions))
 	}
 
-	snap, err := d.SealVault(ctx, name, "test-seal")
+	snap, err := d.SealVault(ctx, token, "test-seal")
 	if err != nil {
 		t.Fatalf("SealVault: %v", err)
 	}
@@ -163,7 +166,7 @@ func TestDaemonResumeAvailable(t *testing.T) {
 
 	ctx := context.Background()
 
-	res1, err := d.OpenVault(ctx, name, testPassphrase, gpgsmith.LockSourceCLI)
+	res1, token, err := d.OpenVault(ctx, name, testPassphrase, gpgsmith.LockSourceCLI)
 	if err != nil {
 		t.Fatalf("first open: %v", err)
 	}
@@ -173,7 +176,7 @@ func TestDaemonResumeAvailable(t *testing.T) {
 
 	// Mutate something so ephemeral flushes.
 	d.mu.RLock()
-	se := d.sessions[name]
+	se := d.sessions[token]
 	d.mu.RUnlock()
 	se.session.MarkChanged()
 
@@ -182,7 +185,7 @@ func TestDaemonResumeAvailable(t *testing.T) {
 		t.Fatalf("AutoSealAndDrop: %v", err)
 	}
 	d.mu.Lock()
-	delete(d.sessions, name)
+	delete(d.sessions, token)
 	d.mu.Unlock()
 
 	// Wait for the ephemeral file to exist (scrypt KDF is slow).
@@ -201,7 +204,7 @@ func TestDaemonResumeAvailable(t *testing.T) {
 	}
 
 	// Now OpenVault should return ResumeAvailable.
-	res2, err := d.OpenVault(ctx, name, testPassphrase, gpgsmith.LockSourceCLI)
+	res2, _, err := d.OpenVault(ctx, name, testPassphrase, gpgsmith.LockSourceCLI)
 	if err != nil {
 		t.Fatalf("second open: %v", err)
 	}

@@ -172,12 +172,17 @@ func TestE2EVaultOpenSealRoundTrip(t *testing.T) {
 	ctx, ctxCancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer ctxCancel()
 
-	if _, err := client.Vault.Open(ctx, connect.NewRequest(&v1.OpenRequest{
+	openResp, err := client.Vault.Open(ctx, connect.NewRequest(&v1.OpenRequest{
 		VaultName:  "work",
 		Passphrase: e2eTestPassphrase,
 		Source:     v1.LockSource_LOCK_SOURCE_CLI,
-	})); err != nil {
+	}))
+	if err != nil {
 		t.Fatalf("Vault.Open: %v", err)
+	}
+	token := openResp.Msg.GetToken()
+	if token == "" {
+		t.Fatal("Vault.Open returned empty token")
 	}
 
 	// Status should now report one open vault.
@@ -189,11 +194,14 @@ func TestE2EVaultOpenSealRoundTrip(t *testing.T) {
 		t.Fatalf("open count = %d, want 1", len(statusResp.Msg.GetOpen()))
 	}
 
-	// Seal should close it.
-	if _, err := client.Vault.Seal(ctx, connect.NewRequest(&v1.SealRequest{
-		VaultName: "work",
-		Message:   "e2e-roundtrip",
-	})); err != nil {
+	// Seal should close it. We stamp the token onto the request
+	// header directly, mimicking what the env-var interceptor does in
+	// production.
+	sealReq := connect.NewRequest(&v1.SealRequest{
+		Message: "e2e-roundtrip",
+	})
+	sealReq.Header().Set(wire.SessionHeader, token)
+	if _, err := client.Vault.Seal(ctx, sealReq); err != nil {
 		t.Fatalf("Vault.Seal: %v", err)
 	}
 

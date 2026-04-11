@@ -21,7 +21,11 @@ func newCardHandler(b Backend) *cardHandler {
 }
 
 func (h *cardHandler) Provision(ctx context.Context, req *connect.Request[v1.ProvisionRequest]) (*connect.Response[v1.ProvisionResponse], error) {
-	card, sshPath, err := h.backend.ProvisionCard(ctx, req.Msg.VaultName, ProvisionCardOpts{
+	token, ok := TokenFromContext(ctx)
+	if !ok {
+		return nil, errMissingSessionToken()
+	}
+	card, sshPath, err := h.backend.ProvisionCard(ctx, token, ProvisionCardOpts{
 		Label:       req.Msg.Label,
 		Description: req.Msg.Description,
 		SameKeys:    req.Msg.SameKeys,
@@ -37,7 +41,11 @@ func (h *cardHandler) Provision(ctx context.Context, req *connect.Request[v1.Pro
 }
 
 func (h *cardHandler) Rotate(ctx context.Context, req *connect.Request[v1.RotateRequest]) (*connect.Response[v1.RotateResponse], error) {
-	card, err := h.backend.RotateCard(ctx, req.Msg.VaultName, req.Msg.Label)
+	token, ok := TokenFromContext(ctx)
+	if !ok {
+		return nil, errMissingSessionToken()
+	}
+	card, err := h.backend.RotateCard(ctx, token, req.Msg.Label)
 	if err != nil {
 		return nil, connectErr(err)
 	}
@@ -47,14 +55,22 @@ func (h *cardHandler) Rotate(ctx context.Context, req *connect.Request[v1.Rotate
 }
 
 func (h *cardHandler) Revoke(ctx context.Context, req *connect.Request[v1.RevokeCardRequest]) (*connect.Response[v1.RevokeCardResponse], error) {
-	if err := h.backend.RevokeCard(ctx, req.Msg.VaultName, req.Msg.Label); err != nil {
+	token, ok := TokenFromContext(ctx)
+	if !ok {
+		return nil, errMissingSessionToken()
+	}
+	if err := h.backend.RevokeCard(ctx, token, req.Msg.Label); err != nil {
 		return nil, connectErr(err)
 	}
 	return connect.NewResponse(&v1.RevokeCardResponse{}), nil
 }
 
-func (h *cardHandler) Inventory(ctx context.Context, req *connect.Request[v1.InventoryRequest]) (*connect.Response[v1.InventoryResponse], error) {
-	cards, err := h.backend.CardInventory(ctx, req.Msg.VaultName)
+func (h *cardHandler) Inventory(ctx context.Context, _ *connect.Request[v1.InventoryRequest]) (*connect.Response[v1.InventoryResponse], error) {
+	token, ok := TokenFromContext(ctx)
+	if !ok {
+		return nil, errMissingSessionToken()
+	}
+	cards, err := h.backend.CardInventory(ctx, token)
 	if err != nil {
 		return nil, connectErr(err)
 	}
@@ -64,7 +80,11 @@ func (h *cardHandler) Inventory(ctx context.Context, req *connect.Request[v1.Inv
 }
 
 func (h *cardHandler) Discover(ctx context.Context, req *connect.Request[v1.DiscoverRequest]) (*connect.Response[v1.DiscoverResponse], error) {
-	card, alreadyKnown, err := h.backend.DiscoverCard(ctx, req.Msg.VaultName, req.Msg.Label, req.Msg.Description)
+	token, ok := TokenFromContext(ctx)
+	if !ok {
+		return nil, errMissingSessionToken()
+	}
+	card, alreadyKnown, err := h.backend.DiscoverCard(ctx, token, req.Msg.Label, req.Msg.Description)
 	if err != nil {
 		return nil, connectErr(err)
 	}

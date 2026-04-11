@@ -317,8 +317,12 @@ type OpenResponse struct {
 	// found and the daemon needs the client to choose resume / discard /
 	// cancel via Resume().
 	ResumeAvailable *ResumeOption `protobuf:"bytes,2,opt,name=resume_available,json=resumeAvailable,proto3" json:"resume_available,omitempty"`
-	unknownFields   protoimpl.UnknownFields
-	sizeCache       protoimpl.SizeCache
+	// token is the opaque per-session handle the client must send back via
+	// the Gpgsmith-Session header on every subsequent session-bearing RPC.
+	// Empty when resume_available is set instead of session.
+	Token         string `protobuf:"bytes,3,opt,name=token,proto3" json:"token,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
 }
 
 func (x *OpenResponse) Reset() {
@@ -363,6 +367,13 @@ func (x *OpenResponse) GetResumeAvailable() *ResumeOption {
 		return x.ResumeAvailable
 	}
 	return nil
+}
+
+func (x *OpenResponse) GetToken() string {
+	if x != nil {
+		return x.Token
+	}
+	return ""
 }
 
 type ResumeRequest struct {
@@ -434,8 +445,10 @@ func (x *ResumeRequest) GetAction() ResumeRequest_Action {
 }
 
 type ResumeResponse struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	Session       *SessionInfo           `protobuf:"bytes,1,opt,name=session,proto3" json:"session,omitempty"`
+	state   protoimpl.MessageState `protogen:"open.v1"`
+	Session *SessionInfo           `protobuf:"bytes,1,opt,name=session,proto3" json:"session,omitempty"`
+	// token is the opaque per-session handle for the resumed session.
+	Token         string `protobuf:"bytes,2,opt,name=token,proto3" json:"token,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -477,10 +490,17 @@ func (x *ResumeResponse) GetSession() *SessionInfo {
 	return nil
 }
 
+func (x *ResumeResponse) GetToken() string {
+	if x != nil {
+		return x.Token
+	}
+	return ""
+}
+
 type SealRequest struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	VaultName     string                 `protobuf:"bytes,1,opt,name=vault_name,json=vaultName,proto3" json:"vault_name,omitempty"`
-	Message       string                 `protobuf:"bytes,2,opt,name=message,proto3" json:"message,omitempty"`
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// Session is identified by the Gpgsmith-Session header.
+	Message       string `protobuf:"bytes,2,opt,name=message,proto3" json:"message,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -513,13 +533,6 @@ func (x *SealRequest) ProtoReflect() protoreflect.Message {
 // Deprecated: Use SealRequest.ProtoReflect.Descriptor instead.
 func (*SealRequest) Descriptor() ([]byte, []int) {
 	return file_gpgsmith_v1_vault_proto_rawDescGZIP(), []int{8}
-}
-
-func (x *SealRequest) GetVaultName() string {
-	if x != nil {
-		return x.VaultName
-	}
-	return ""
 }
 
 func (x *SealRequest) GetMessage() string {
@@ -575,7 +588,6 @@ func (x *SealResponse) GetSnapshot() *Snapshot {
 
 type DiscardRequest struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
-	VaultName     string                 `protobuf:"bytes,1,opt,name=vault_name,json=vaultName,proto3" json:"vault_name,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -608,13 +620,6 @@ func (x *DiscardRequest) ProtoReflect() protoreflect.Message {
 // Deprecated: Use DiscardRequest.ProtoReflect.Descriptor instead.
 func (*DiscardRequest) Descriptor() ([]byte, []int) {
 	return file_gpgsmith_v1_vault_proto_rawDescGZIP(), []int{10}
-}
-
-func (x *DiscardRequest) GetVaultName() string {
-	if x != nil {
-		return x.VaultName
-	}
-	return ""
 }
 
 type DiscardResponse struct {
@@ -805,6 +810,7 @@ type CreateVaultResponse struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	Snapshot      *Snapshot              `protobuf:"bytes,1,opt,name=snapshot,proto3" json:"snapshot,omitempty"` // the initial empty snapshot
 	Session       *SessionInfo           `protobuf:"bytes,2,opt,name=session,proto3" json:"session,omitempty"`   // the newly-opened session on the new vault
+	Token         string                 `protobuf:"bytes,3,opt,name=token,proto3" json:"token,omitempty"`       // opaque session handle (Gpgsmith-Session header)
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -851,6 +857,13 @@ func (x *CreateVaultResponse) GetSession() *SessionInfo {
 		return x.Session
 	}
 	return nil
+}
+
+func (x *CreateVaultResponse) GetToken() string {
+	if x != nil {
+		return x.Token
+	}
+	return ""
 }
 
 type ImportRequest struct {
@@ -1176,10 +1189,11 @@ const file_gpgsmith_v1_vault_proto_rawDesc = "" +
 	"\n" +
 	"passphrase\x18\x02 \x01(\tR\n" +
 	"passphrase\x12/\n" +
-	"\x06source\x18\x03 \x01(\x0e2\x17.gpgsmith.v1.LockSourceR\x06source\"\x88\x01\n" +
+	"\x06source\x18\x03 \x01(\x0e2\x17.gpgsmith.v1.LockSourceR\x06source\"\x9e\x01\n" +
 	"\fOpenResponse\x122\n" +
 	"\asession\x18\x01 \x01(\v2\x18.gpgsmith.v1.SessionInfoR\asession\x12D\n" +
-	"\x10resume_available\x18\x02 \x01(\v2\x19.gpgsmith.v1.ResumeOptionR\x0fresumeAvailable\"\x83\x02\n" +
+	"\x10resume_available\x18\x02 \x01(\v2\x19.gpgsmith.v1.ResumeOptionR\x0fresumeAvailable\x12\x14\n" +
+	"\x05token\x18\x03 \x01(\tR\x05token\"\x83\x02\n" +
 	"\rResumeRequest\x12\x1d\n" +
 	"\n" +
 	"vault_name\x18\x01 \x01(\tR\tvaultName\x12\x1e\n" +
@@ -1191,18 +1205,17 @@ const file_gpgsmith_v1_vault_proto_rawDesc = "" +
 	"\x06Action\x12\x16\n" +
 	"\x12ACTION_UNSPECIFIED\x10\x00\x12\x11\n" +
 	"\rACTION_RESUME\x10\x01\x12\x12\n" +
-	"\x0eACTION_DISCARD\x10\x02\"D\n" +
+	"\x0eACTION_DISCARD\x10\x02\"Z\n" +
 	"\x0eResumeResponse\x122\n" +
-	"\asession\x18\x01 \x01(\v2\x18.gpgsmith.v1.SessionInfoR\asession\"F\n" +
-	"\vSealRequest\x12\x1d\n" +
-	"\n" +
-	"vault_name\x18\x01 \x01(\tR\tvaultName\x12\x18\n" +
-	"\amessage\x18\x02 \x01(\tR\amessage\"A\n" +
+	"\asession\x18\x01 \x01(\v2\x18.gpgsmith.v1.SessionInfoR\asession\x12\x14\n" +
+	"\x05token\x18\x02 \x01(\tR\x05token\"9\n" +
+	"\vSealRequest\x12\x18\n" +
+	"\amessage\x18\x02 \x01(\tR\amessageJ\x04\b\x01\x10\x02R\n" +
+	"vault_name\"A\n" +
 	"\fSealResponse\x121\n" +
-	"\bsnapshot\x18\x01 \x01(\v2\x15.gpgsmith.v1.SnapshotR\bsnapshot\"/\n" +
-	"\x0eDiscardRequest\x12\x1d\n" +
-	"\n" +
-	"vault_name\x18\x01 \x01(\tR\tvaultName\"\x11\n" +
+	"\bsnapshot\x18\x01 \x01(\v2\x15.gpgsmith.v1.SnapshotR\bsnapshot\"\"\n" +
+	"\x0eDiscardRequestJ\x04\b\x01\x10\x02R\n" +
+	"vault_name\"\x11\n" +
 	"\x0fDiscardResponse\"1\n" +
 	"\x10SnapshotsRequest\x12\x1d\n" +
 	"\n" +
@@ -1214,10 +1227,11 @@ const file_gpgsmith_v1_vault_proto_rawDesc = "" +
 	"\x04path\x18\x02 \x01(\tR\x04path\x12\x1e\n" +
 	"\n" +
 	"passphrase\x18\x03 \x01(\tR\n" +
-	"passphrase\"|\n" +
+	"passphrase\"\x92\x01\n" +
 	"\x13CreateVaultResponse\x121\n" +
 	"\bsnapshot\x18\x01 \x01(\v2\x15.gpgsmith.v1.SnapshotR\bsnapshot\x122\n" +
-	"\asession\x18\x02 \x01(\v2\x18.gpgsmith.v1.SessionInfoR\asession\"|\n" +
+	"\asession\x18\x02 \x01(\v2\x18.gpgsmith.v1.SessionInfoR\asession\x12\x14\n" +
+	"\x05token\x18\x03 \x01(\tR\x05token\"|\n" +
 	"\rImportRequest\x12\x1f\n" +
 	"\vsource_path\x18\x01 \x01(\tR\n" +
 	"sourcePath\x12\x1e\n" +

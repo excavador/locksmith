@@ -30,38 +30,44 @@ func NewServer(backend Backend) *Server {
 		handler http.Handler
 	}
 
+	// The session interceptor lifts the Gpgsmith-Session header into the
+	// request context. It is mounted on every service so handlers can
+	// call TokenFromContext without knowing which transport delivered
+	// the request.
+	handlerOpt := WithServerSessionInterceptor()
+
 	regs := []registration{}
 
 	{
-		path, handler := gpgsmithv1connect.NewDaemonServiceHandler(newDaemonHandler(backend))
+		path, handler := gpgsmithv1connect.NewDaemonServiceHandler(newDaemonHandler(backend), handlerOpt)
 		regs = append(regs, registration{path, handler})
 	}
 	{
-		path, handler := gpgsmithv1connect.NewVaultServiceHandler(newVaultHandler(backend))
+		path, handler := gpgsmithv1connect.NewVaultServiceHandler(newVaultHandler(backend), handlerOpt)
 		regs = append(regs, registration{path, handler})
 	}
 	{
-		path, handler := gpgsmithv1connect.NewKeyServiceHandler(newKeyHandler(backend))
+		path, handler := gpgsmithv1connect.NewKeyServiceHandler(newKeyHandler(backend), handlerOpt)
 		regs = append(regs, registration{path, handler})
 	}
 	{
-		path, handler := gpgsmithv1connect.NewIdentityServiceHandler(newIdentityHandler(backend))
+		path, handler := gpgsmithv1connect.NewIdentityServiceHandler(newIdentityHandler(backend), handlerOpt)
 		regs = append(regs, registration{path, handler})
 	}
 	{
-		path, handler := gpgsmithv1connect.NewCardServiceHandler(newCardHandler(backend))
+		path, handler := gpgsmithv1connect.NewCardServiceHandler(newCardHandler(backend), handlerOpt)
 		regs = append(regs, registration{path, handler})
 	}
 	{
-		path, handler := gpgsmithv1connect.NewServerServiceHandler(newServerHandler(backend))
+		path, handler := gpgsmithv1connect.NewServerServiceHandler(newServerHandler(backend), handlerOpt)
 		regs = append(regs, registration{path, handler})
 	}
 	{
-		path, handler := gpgsmithv1connect.NewAuditServiceHandler(newAuditHandler(backend))
+		path, handler := gpgsmithv1connect.NewAuditServiceHandler(newAuditHandler(backend), handlerOpt)
 		regs = append(regs, registration{path, handler})
 	}
 	{
-		path, handler := gpgsmithv1connect.NewEventServiceHandler(newEventHandler(backend))
+		path, handler := gpgsmithv1connect.NewEventServiceHandler(newEventHandler(backend), handlerOpt)
 		regs = append(regs, registration{path, handler})
 	}
 

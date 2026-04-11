@@ -98,13 +98,11 @@ func keysCreate(ctx context.Context, cmd *cli.Command) error {
 	}
 	defer client.Close()
 
-	vaultName, err := resolveVaultName(ctx, client, cmd)
-	if err != nil {
+	if err := ensureSessionToken(ctx, client); err != nil {
 		return fmt.Errorf("keys create: %w", err)
 	}
 
 	resp, err := client.Key.Create(ctx, connect.NewRequest(&v1.CreateRequest{
-		VaultName:    vaultName,
 		Name:         name,
 		Email:        email,
 		Algo:         cmd.String("algo"),
@@ -122,19 +120,18 @@ func keysCreate(ctx context.Context, cmd *cli.Command) error {
 	return nil
 }
 
-func keysGenerate(ctx context.Context, cmd *cli.Command) error {
+func keysGenerate(ctx context.Context, _ *cli.Command) error {
 	client, err := ensureClient(ctx)
 	if err != nil {
 		return fmt.Errorf("keys generate: %w", err)
 	}
 	defer client.Close()
 
-	vaultName, err := resolveVaultName(ctx, client, cmd)
-	if err != nil {
+	if err := ensureSessionToken(ctx, client); err != nil {
 		return fmt.Errorf("keys generate: %w", err)
 	}
 
-	resp, err := client.Key.Generate(ctx, connect.NewRequest(&v1.GenerateRequest{VaultName: vaultName}))
+	resp, err := client.Key.Generate(ctx, connect.NewRequest(&v1.GenerateRequest{}))
 	if err != nil {
 		return fmt.Errorf("keys generate: %w", err)
 	}
@@ -144,19 +141,18 @@ func keysGenerate(ctx context.Context, cmd *cli.Command) error {
 	return nil
 }
 
-func keysList(ctx context.Context, cmd *cli.Command) error {
+func keysList(ctx context.Context, _ *cli.Command) error {
 	client, err := ensureClient(ctx)
 	if err != nil {
 		return fmt.Errorf("keys list: %w", err)
 	}
 	defer client.Close()
 
-	vaultName, err := resolveVaultName(ctx, client, cmd)
-	if err != nil {
+	if err := ensureSessionToken(ctx, client); err != nil {
 		return fmt.Errorf("keys list: %w", err)
 	}
 
-	resp, err := client.Key.List(ctx, connect.NewRequest(&v1.ListKeysRequest{VaultName: vaultName}))
+	resp, err := client.Key.List(ctx, connect.NewRequest(&v1.ListKeysRequest{}))
 	if err != nil {
 		return fmt.Errorf("keys list: %w", err)
 	}
@@ -193,14 +189,12 @@ func keysRevoke(ctx context.Context, cmd *cli.Command) error {
 	}
 	defer client.Close()
 
-	vaultName, err := resolveVaultName(ctx, client, cmd)
-	if err != nil {
+	if err := ensureSessionToken(ctx, client); err != nil {
 		return fmt.Errorf("keys revoke: %w", err)
 	}
 
 	_, err = client.Key.Revoke(ctx, connect.NewRequest(&v1.RevokeRequest{
-		VaultName: vaultName,
-		KeyId:     keyID,
+		KeyId: keyID,
 	}))
 	if err != nil {
 		return fmt.Errorf("keys revoke: %w", err)
@@ -209,19 +203,18 @@ func keysRevoke(ctx context.Context, cmd *cli.Command) error {
 	return nil
 }
 
-func keysExport(ctx context.Context, cmd *cli.Command) error {
+func keysExport(ctx context.Context, _ *cli.Command) error {
 	client, err := ensureClient(ctx)
 	if err != nil {
 		return fmt.Errorf("keys export: %w", err)
 	}
 	defer client.Close()
 
-	vaultName, err := resolveVaultName(ctx, client, cmd)
-	if err != nil {
+	if err := ensureSessionToken(ctx, client); err != nil {
 		return fmt.Errorf("keys export: %w", err)
 	}
 
-	resp, err := client.Key.Export(ctx, connect.NewRequest(&v1.ExportKeyRequest{VaultName: vaultName}))
+	resp, err := client.Key.Export(ctx, connect.NewRequest(&v1.ExportKeyRequest{}))
 	if err != nil {
 		return fmt.Errorf("keys export: %w", err)
 	}
@@ -229,19 +222,18 @@ func keysExport(ctx context.Context, cmd *cli.Command) error {
 	return nil
 }
 
-func keysSSHPubKey(ctx context.Context, cmd *cli.Command) error {
+func keysSSHPubKey(ctx context.Context, _ *cli.Command) error {
 	client, err := ensureClient(ctx)
 	if err != nil {
 		return fmt.Errorf("keys ssh-pubkey: %w", err)
 	}
 	defer client.Close()
 
-	vaultName, err := resolveVaultName(ctx, client, cmd)
-	if err != nil {
+	if err := ensureSessionToken(ctx, client); err != nil {
 		return fmt.Errorf("keys ssh-pubkey: %w", err)
 	}
 
-	resp, err := client.Key.SSHPubKey(ctx, connect.NewRequest(&v1.SSHPubKeyRequest{VaultName: vaultName}))
+	resp, err := client.Key.SSHPubKey(ctx, connect.NewRequest(&v1.SSHPubKeyRequest{}))
 	if err != nil {
 		return fmt.Errorf("keys ssh-pubkey: %w", err)
 	}
@@ -249,19 +241,18 @@ func keysSSHPubKey(ctx context.Context, cmd *cli.Command) error {
 	return nil
 }
 
-func keysStatus(ctx context.Context, cmd *cli.Command) error {
+func keysStatus(ctx context.Context, _ *cli.Command) error {
 	client, err := ensureClient(ctx)
 	if err != nil {
 		return fmt.Errorf("keys status: %w", err)
 	}
 	defer client.Close()
 
-	vaultName, err := resolveVaultName(ctx, client, cmd)
-	if err != nil {
+	if err := ensureSessionToken(ctx, client); err != nil {
 		return fmt.Errorf("keys status: %w", err)
 	}
 
-	resp, err := client.Key.Status(ctx, connect.NewRequest(&v1.KeyStatusRequest{VaultName: vaultName}))
+	resp, err := client.Key.Status(ctx, connect.NewRequest(&v1.KeyStatusRequest{}))
 	if err != nil {
 		return fmt.Errorf("keys status: %w", err)
 	}

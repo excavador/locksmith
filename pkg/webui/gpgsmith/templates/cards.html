@@ -1,0 +1,33 @@
+{{define "cards"}}
+{{template "header" .}}
+<h2>Cards</h2>
+{{- if not .Cards.Cards}}
+<p class="empty">No cards registered in the inventory.</p>
+{{- else}}
+<table>
+    <thead>
+        <tr>
+            <th>Serial</th>
+            <th>Label</th>
+            <th>Model</th>
+            <th>Provisioning</th>
+            <th>Status</th>
+            <th>Description</th>
+        </tr>
+    </thead>
+    <tbody>
+        {{- range .Cards.Cards}}
+        <tr>
+            <td class="mono">{{.Serial}}</td>
+            <td>{{template "dash" .Label}}</td>
+            <td>{{template "dash" .Model}}</td>
+            <td>{{template "dash" .Provisioning}}</td>
+            <td>{{template "dash" .Status}}</td>
+            <td>{{template "dash" .Description}}</td>
+        </tr>
+        {{- end}}
+    </tbody>
+</table>
+{{- end}}
+{{template "footer" .}}
+{{end}}

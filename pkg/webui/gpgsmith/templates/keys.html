@@ -1,0 +1,42 @@
+{{define "keys"}}
+{{template "header" .}}
+<h2>Keys</h2>
+{{- if not .Keys.Keys}}
+<p class="empty">No keys in this vault yet. Run <code>gpgsmith keys create</code> from the CLI.</p>
+{{- else}}
+<table>
+    <thead>
+        <tr>
+            <th>Key ID</th>
+            <th>Algo</th>
+            <th>Usage</th>
+            <th>Validity</th>
+            <th>Created</th>
+            <th>Expires</th>
+            <th>Card</th>
+        </tr>
+    </thead>
+    <tbody>
+        {{- range .Keys.Keys}}
+        <tr>
+            <td class="mono">{{.KeyID}}</td>
+            <td>{{.Algo}}</td>
+            <td>{{.Usage}}</td>
+            <td>{{template "dash" .Validity}}</td>
+            <td>{{.Created}}</td>
+            <td>{{template "dash" .Expires}}</td>
+            <td>{{template "dash" .CardSerial}}</td>
+        </tr>
+        {{- end}}
+    </tbody>
+</table>
+{{- end}}
+
+<h2>Card (from KeyService.Status)</h2>
+{{- if .Keys.CardSerial}}
+<p><strong>Serial:</strong> <span class="mono">{{.Keys.CardSerial}}</span> &nbsp; <strong>Model:</strong> {{.Keys.CardModel}}</p>
+{{- else}}
+<p class="empty">No card detected.</p>
+{{- end}}
+{{template "footer" .}}
+{{end}}

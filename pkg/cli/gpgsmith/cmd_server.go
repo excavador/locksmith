@@ -53,19 +53,18 @@ func serverCmd() *cli.Command {
 	}
 }
 
-func serverList(ctx context.Context, cmd *cli.Command) error {
+func serverList(ctx context.Context, _ *cli.Command) error {
 	client, err := ensureClient(ctx)
 	if err != nil {
 		return fmt.Errorf("server list: %w", err)
 	}
 	defer client.Close()
 
-	vaultName, err := resolveVaultName(ctx, client, cmd)
-	if err != nil {
+	if err := ensureSessionToken(ctx, client); err != nil {
 		return fmt.Errorf("server list: %w", err)
 	}
 
-	resp, err := client.Server.List(ctx, connect.NewRequest(&v1.ListServersRequest{VaultName: vaultName}))
+	resp, err := client.Server.List(ctx, connect.NewRequest(&v1.ListServersRequest{}))
 	if err != nil {
 		return fmt.Errorf("server list: %w", err)
 	}
@@ -91,19 +90,21 @@ func serverAdd(ctx context.Context, cmd *cli.Command) error {
 	if args.Len() < 2 { //nolint:mnd // alias + url
 		return fmt.Errorf("server add: usage: add <alias> <url>")
 	}
-	return simpleServerCall(ctx, cmd, "add", func(v string) error {
-		client, err := ensureClient(ctx)
-		if err != nil {
-			return err
-		}
-		defer client.Close()
-		_, err = client.Server.Add(ctx, connect.NewRequest(&v1.AddServerRequest{
-			VaultName: v,
-			Alias:     args.Get(0),
-			Url:       args.Get(1),
-		}))
-		return err
-	})
+	client, err := ensureClient(ctx)
+	if err != nil {
+		return fmt.Errorf("server add: %w", err)
+	}
+	defer client.Close()
+	if err := ensureSessionToken(ctx, client); err != nil {
+		return fmt.Errorf("server add: %w", err)
+	}
+	if _, err := client.Server.Add(ctx, connect.NewRequest(&v1.AddServerRequest{
+		Alias: args.Get(0),
+		Url:   args.Get(1),
+	})); err != nil {
+		return fmt.Errorf("server add: %w", err)
+	}
+	return nil
 }
 
 func serverRemove(ctx context.Context, cmd *cli.Command) error {
@@ -111,18 +112,20 @@ func serverRemove(ctx context.Context, cmd *cli.Command) error {
 	if alias == "" {
 		return fmt.Errorf("server remove: missing <alias>")
 	}
-	return simpleServerCall(ctx, cmd, "remove", func(v string) error {
-		client, err := ensureClient(ctx)
-		if err != nil {
-			return err
-		}
-		defer client.Close()
-		_, err = client.Server.Remove(ctx, connect.NewRequest(&v1.RemoveServerRequest{
-			VaultName: v,
-			Alias:     alias,
-		}))
-		return err
-	})
+	client, err := ensureClient(ctx)
+	if err != nil {
+		return fmt.Errorf("server remove: %w", err)
+	}
+	defer client.Close()
+	if err := ensureSessionToken(ctx, client); err != nil {
+		return fmt.Errorf("server remove: %w", err)
+	}
+	if _, err := client.Server.Remove(ctx, connect.NewRequest(&v1.RemoveServerRequest{
+		Alias: alias,
+	})); err != nil {
+		return fmt.Errorf("server remove: %w", err)
+	}
+	return nil
 }
 
 func serverEnable(ctx context.Context, cmd *cli.Command) error {
@@ -130,18 +133,20 @@ func serverEnable(ctx context.Context, cmd *cli.Command) error {
 	if alias == "" {
 		return fmt.Errorf("server enable: missing <alias>")
 	}
-	return simpleServerCall(ctx, cmd, "enable", func(v string) error {
-		client, err := ensureClient(ctx)
-		if err != nil {
-			return err
-		}
-		defer client.Close()
-		_, err = client.Server.Enable(ctx, connect.NewRequest(&v1.EnableServerRequest{
-			VaultName: v,
-			Alias:     alias,
-		}))
-		return err
-	})
+	client, err := ensureClient(ctx)
+	if err != nil {
+		return fmt.Errorf("server enable: %w", err)
+	}
+	defer client.Close()
+	if err := ensureSessionToken(ctx, client); err != nil {
+		return fmt.Errorf("server enable: %w", err)
+	}
+	if _, err := client.Server.Enable(ctx, connect.NewRequest(&v1.EnableServerRequest{
+		Alias: alias,
+	})); err != nil {
+		return fmt.Errorf("server enable: %w", err)
+	}
+	return nil
 }
 
 func serverDisable(ctx context.Context, cmd *cli.Command) error {
@@ -149,18 +154,20 @@ func serverDisable(ctx context.Context, cmd *cli.Command) error {
 	if alias == "" {
 		return fmt.Errorf("server disable: missing <alias>")
 	}
-	return simpleServerCall(ctx, cmd, "disable", func(v string) error {
-		client, err := ensureClient(ctx)
-		if err != nil {
-			return err
-		}
-		defer client.Close()
-		_, err = client.Server.Disable(ctx, connect.NewRequest(&v1.DisableServerRequest{
-			VaultName: v,
-			Alias:     alias,
-		}))
-		return err
-	})
+	client, err := ensureClient(ctx)
+	if err != nil {
+		return fmt.Errorf("server disable: %w", err)
+	}
+	defer client.Close()
+	if err := ensureSessionToken(ctx, client); err != nil {
+		return fmt.Errorf("server disable: %w", err)
+	}
+	if _, err := client.Server.Disable(ctx, connect.NewRequest(&v1.DisableServerRequest{
+		Alias: alias,
+	})); err != nil {
+		return fmt.Errorf("server disable: %w", err)
+	}
+	return nil
 }
 
 func serverPublish(ctx context.Context, cmd *cli.Command) error {
@@ -170,14 +177,12 @@ func serverPublish(ctx context.Context, cmd *cli.Command) error {
 	}
 	defer client.Close()
 
-	vaultName, err := resolveVaultName(ctx, client, cmd)
-	if err != nil {
+	if err := ensureSessionToken(ctx, client); err != nil {
 		return fmt.Errorf("server publish: %w", err)
 	}
 
 	resp, err := client.Server.Publish(ctx, connect.NewRequest(&v1.PublishRequest{
-		VaultName: vaultName,
-		Aliases:   cmd.Args().Slice(),
+		Aliases: cmd.Args().Slice(),
 	}))
 	if err != nil {
 		return fmt.Errorf("server publish: %w", err)
@@ -194,19 +199,18 @@ func serverPublish(ctx context.Context, cmd *cli.Command) error {
 	return w.Flush()
 }
 
-func serverLookup(ctx context.Context, cmd *cli.Command) error {
+func serverLookup(ctx context.Context, _ *cli.Command) error {
 	client, err := ensureClient(ctx)
 	if err != nil {
 		return fmt.Errorf("server lookup: %w", err)
 	}
 	defer client.Close()
 
-	vaultName, err := resolveVaultName(ctx, client, cmd)
-	if err != nil {
+	if err := ensureSessionToken(ctx, client); err != nil {
 		return fmt.Errorf("server lookup: %w", err)
 	}
 
-	resp, err := client.Server.Lookup(ctx, connect.NewRequest(&v1.LookupRequest{VaultName: vaultName}))
+	resp, err := client.Server.Lookup(ctx, connect.NewRequest(&v1.LookupRequest{}))
 	if err != nil {
 		return fmt.Errorf("server lookup: %w", err)
 	}
@@ -216,23 +220,4 @@ func serverLookup(ctx context.Context, cmd *cli.Command) error {
 		_, _ = fmt.Fprintf(w, "%s\t%s\n", r.GetUrl(), dash(r.GetStatus()))
 	}
 	return w.Flush()
-}
-
-// simpleServerCall is a tiny shared helper that resolves the vault name
-// and calls the supplied fn, wrapping errors with the operation label.
-func simpleServerCall(ctx context.Context, cmd *cli.Command, label string, fn func(vault string) error) error {
-	client, err := ensureClient(ctx)
-	if err != nil {
-		return fmt.Errorf("server %s: %w", label, err)
-	}
-	defer client.Close()
-
-	vaultName, err := resolveVaultName(ctx, client, cmd)
-	if err != nil {
-		return fmt.Errorf("server %s: %w", label, err)
-	}
-	if err := fn(vaultName); err != nil {
-		return fmt.Errorf("server %s: %w", label, err)
-	}
-	return nil
 }

@@ -25,6 +25,8 @@ package daemon
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"io"
@@ -44,9 +46,14 @@ import (
 
 type (
 	// Daemon implements wire.Backend against the gpgsmith kernel. It owns
-	// a map of open sessions keyed by vault name, an event broker for
-	// pub/sub fan-out, and a cancellation channel that the lifecycle
-	// goroutine in lifecycle.go uses to coordinate graceful shutdown.
+	// a map of open sessions keyed by opaque session token, an event
+	// broker for pub/sub fan-out, and a cancellation channel that the
+	// lifecycle goroutine in lifecycle.go uses to coordinate graceful
+	// shutdown.
+	//
+	// Multiple open sessions for the same vault name are allowed and are
+	// fully independent: each has its own token, its own /dev/shm workdir,
+	// and its own gpg-agent pair. They do NOT share backing state.
 	//
 	// All methods on Daemon are safe to call from multiple goroutines
 	// concurrently. Per-session state is protected by the per-entry
@@ -63,7 +70,7 @@ type (
 		gracefulTimeout time.Duration
 
 		mu       sync.RWMutex
-		sessions map[string]*sessionEntry
+		sessions map[string]*sessionEntry // keyed by opaque session token
 
 		broker *Broker
 
@@ -88,12 +95,15 @@ type (
 		SocketPath string
 	}
 
-	// sessionEntry is the daemon's per-vault book-keeping around a kernel
-	// gpgsmith.Session. The mu serializes mutating Backend methods on a
-	// single vault while leaving cross-vault calls free to run in
-	// parallel.
+	// sessionEntry is the daemon's per-session book-keeping around a
+	// kernel gpgsmith.Session. The mu serializes mutating Backend methods
+	// on a single session while leaving cross-session calls free to run
+	// in parallel. Each entry carries its own opaque token — the key
+	// under which it lives in Daemon.sessions — so that auto-seal
+	// callbacks (idle timeout, shutdown) can find and delete themselves.
 	sessionEntry struct {
 		mu           sync.Mutex
+		token        string
 		session      *gpgsmith.Session
 		entry        *vault.Entry
 		startedAt    time.Time
@@ -122,13 +132,27 @@ const (
 
 var (
 	// ErrSessionNotOpen is returned by methods that require an open
-	// session when no session exists for the requested vault name.
-	ErrSessionNotOpen = errors.New("daemon: no open session for vault")
+	// session when no session exists for the requested token.
+	ErrSessionNotOpen = errors.New("daemon: no open session for token")
 
 	// ErrShuttingDown is returned by OpenVault / ResumeVault while the
 	// daemon is in the process of shutting down.
 	ErrShuttingDown = errors.New("daemon: shutting down")
 )
+
+// newSessionToken returns a fresh opaque 64-hex-char session handle,
+// generated from crypto/rand. 32 bytes of entropy is ample for tying
+// an RPC to a single live daemon process.
+func newSessionToken() string {
+	var buf [32]byte
+	if _, err := rand.Read(buf[:]); err != nil {
+		// crypto/rand.Read on all supported platforms never fails in
+		// practice; if it does, panic is the only honest response —
+		// we would otherwise mint a zero-entropy token.
+		panic(fmt.Sprintf("daemon: crypto/rand failed: %v", err))
+	}
+	return hex.EncodeToString(buf[:])
+}
 
 // New constructs a Daemon with the given options. The returned Daemon is
 // not yet listening on a socket; call Run to start the lifecycle.
@@ -174,20 +198,38 @@ func (d *Daemon) SocketPath() string {
 
 // ===== helpers =====
 
-func (d *Daemon) lookupSession(name string) (*sessionEntry, error) {
+func (d *Daemon) lookupSession(token string) (*sessionEntry, error) {
+	if token == "" {
+		return nil, ErrSessionNotOpen
+	}
 	d.mu.RLock()
-	se, ok := d.sessions[name]
+	se, ok := d.sessions[token]
 	d.mu.RUnlock()
 	if !ok {
-		return nil, fmt.Errorf("%w: %s", ErrSessionNotOpen, name)
+		return nil, fmt.Errorf("%w", ErrSessionNotOpen)
 	}
 	return se, nil
 }
 
-func (d *Daemon) sessionInfoLocked(name string, se *sessionEntry) wire.SessionInfo {
+// vaultNameFromToken is a convenience for wire-level filtering (e.g. the
+// event subscriber) that wants the vault name for a given token. Returns
+// "" if the token is unknown.
+func (d *Daemon) vaultNameFromToken(token string) string {
+	if token == "" {
+		return ""
+	}
+	d.mu.RLock()
+	defer d.mu.RUnlock()
+	if se, ok := d.sessions[token]; ok && se.entry != nil {
+		return se.entry.Name
+	}
+	return ""
+}
+
+func (d *Daemon) sessionInfoLocked(se *sessionEntry) wire.SessionInfo {
 	s := se.session
 	info := wire.SessionInfo{
-		VaultName:    name,
+		VaultName:    se.entry.Name,
 		VaultPath:    se.entry.Path,
 		Source:       s.Source,
 		Hostname:     s.Hostname,
@@ -203,27 +245,32 @@ func (d *Daemon) sessionInfoLocked(name string, se *sessionEntry) wire.SessionIn
 	return info
 }
 
-func (d *Daemon) startIdleTimer(name string, se *sessionEntry) {
+func (d *Daemon) startIdleTimer(se *sessionEntry) {
 	se.mu.Lock()
 	defer se.mu.Unlock()
+	token := se.token
 	se.idleTimer = time.AfterFunc(d.idleTimeout, func() {
-		d.handleIdleTimeout(name)
+		d.handleIdleTimeout(token)
 	})
 }
 
-func (d *Daemon) handleIdleTimeout(name string) {
+func (d *Daemon) handleIdleTimeout(token string) {
 	d.mu.Lock()
-	se, ok := d.sessions[name]
+	se, ok := d.sessions[token]
 	if !ok {
 		d.mu.Unlock()
 		return
 	}
-	delete(d.sessions, name)
+	delete(d.sessions, token)
 	d.mu.Unlock()
 
 	ctx := context.Background()
 	se.mu.Lock()
 	s := se.session
+	name := ""
+	if se.entry != nil {
+		name = se.entry.Name
+	}
 	se.mu.Unlock()
 
 	if s != nil && !s.IsClosed() {
@@ -298,17 +345,17 @@ func (d *Daemon) DaemonShutdown(ctx context.Context, gracefulTimeoutSeconds int)
 	deadline := time.Now().Add(budget)
 
 	d.mu.Lock()
-	names := make([]string, 0, len(d.sessions))
-	for name := range d.sessions {
-		names = append(names, name)
+	tokens := make([]string, 0, len(d.sessions))
+	for tok := range d.sessions {
+		tokens = append(tokens, tok)
 	}
 	d.mu.Unlock()
 
-	for _, name := range names {
+	for _, tok := range tokens {
 		d.mu.Lock()
-		se, ok := d.sessions[name]
+		se, ok := d.sessions[tok]
 		if ok {
-			delete(d.sessions, name)
+			delete(d.sessions, tok)
 		}
 		d.mu.Unlock()
 		if !ok {
@@ -320,6 +367,10 @@ func (d *Daemon) DaemonShutdown(ctx context.Context, gracefulTimeoutSeconds int)
 			se.idleTimer.Stop()
 		}
 		s := se.session
+		name := ""
+		if se.entry != nil {
+			name = se.entry.Name
+		}
 		se.mu.Unlock()
 
 		remaining := time.Until(deadline)
@@ -369,8 +420,26 @@ func (d *Daemon) ListSessions(_ context.Context) ([]wire.SessionInfo, error) {
 	d.mu.RLock()
 	defer d.mu.RUnlock()
 	out := make([]wire.SessionInfo, 0, len(d.sessions))
-	for name, se := range d.sessions {
-		out = append(out, d.sessionInfoLocked(name, se))
+	for _, se := range d.sessions {
+		out = append(out, d.sessionInfoLocked(se))
+	}
+	return out, nil
+}
+
+// ListSessionTokens implements wire.Backend. Returns the opaque
+// session tokens alongside each session's vault name for the local
+// CLI auto-bind path. The tokens are NOT exposed via proto messages;
+// they travel only in a response header stamped by the wire layer.
+func (d *Daemon) ListSessionTokens(_ context.Context) ([]wire.SessionTokenEntry, error) {
+	d.mu.RLock()
+	defer d.mu.RUnlock()
+	out := make([]wire.SessionTokenEntry, 0, len(d.sessions))
+	for tok, se := range d.sessions {
+		name := ""
+		if se.entry != nil {
+			name = se.entry.Name
+		}
+		out = append(out, wire.SessionTokenEntry{Token: tok, VaultName: name})
 	}
 	return out, nil
 }
@@ -442,9 +511,11 @@ func (d *Daemon) StatusVaults(_ context.Context) ([]wire.SessionInfo, []wire.Res
 	d.mu.RLock()
 	open := make([]wire.SessionInfo, 0, len(d.sessions))
 	openSet := make(map[string]struct{}, len(d.sessions))
-	for name, se := range d.sessions {
-		open = append(open, d.sessionInfoLocked(name, se))
-		openSet[name] = struct{}{}
+	for _, se := range d.sessions {
+		open = append(open, d.sessionInfoLocked(se))
+		if se.entry != nil {
+			openSet[se.entry.Name] = struct{}{}
+		}
 	}
 	d.mu.RUnlock()
 
@@ -484,27 +555,23 @@ func ephToResumeOption(eph *gpgsmith.Ephemeral) wire.ResumeOption {
 // without opening — the caller must follow up with ResumeVault.
 // Otherwise the latest canonical is opened, TOFU is performed, and the
 // new session is recorded in d.sessions.
-func (d *Daemon) OpenVault(ctx context.Context, name, passphrase string, source gpgsmith.LockSource) (wire.OpenResult, error) {
+func (d *Daemon) OpenVault(ctx context.Context, name, passphrase string, source gpgsmith.LockSource) (wire.OpenResult, string, error) {
 	if d.shuttingDown.Load() {
-		return wire.OpenResult{}, ErrShuttingDown
+		return wire.OpenResult{}, "", ErrShuttingDown
 	}
 
 	cfg, err := d.loadConfig()
 	if err != nil {
-		return wire.OpenResult{}, err
+		return wire.OpenResult{}, "", err
 	}
 	entry, err := cfg.Resolve(name)
 	if err != nil {
-		return wire.OpenResult{}, fmt.Errorf("open vault: %w", err)
+		return wire.OpenResult{}, "", fmt.Errorf("open vault: %w", err)
 	}
 
-	d.mu.RLock()
-	_, exists := d.sessions[entry.Name]
-	d.mu.RUnlock()
-	if exists {
-		return wire.OpenResult{}, fmt.Errorf("open vault: session for %q already open", entry.Name)
-	}
-
+	// Multiple independent sessions for the same vault name are allowed.
+	// We only consult the on-disk ephemeral state here; any previous
+	// in-memory session is unrelated to this new decrypt.
 	hostname, _ := os.Hostname()
 	if hostname == "" {
 		hostname = unknownHostname
@@ -513,12 +580,12 @@ func (d *Daemon) OpenVault(ctx context.Context, name, passphrase string, source 
 	if eph, _ := gpgsmith.FindEphemeralFor(entry.Path, hostname); eph != nil {
 		opt := ephToResumeOption(eph)
 		opt.Divergent = isDivergent(entry.Path, eph)
-		return wire.OpenResult{ResumeAvailable: &opt}, nil
+		return wire.OpenResult{ResumeAvailable: &opt}, "", nil
 	}
 
 	v, err := vault.NewWithPassphrase(entry.ToConfig(), passphrase, d.logger)
 	if err != nil {
-		return wire.OpenResult{}, fmt.Errorf("open vault: %w", err)
+		return wire.OpenResult{}, "", fmt.Errorf("open vault: %w", err)
 	}
 
 	res, err := gpgsmith.OpenSession(ctx, v, entry, gpgsmith.SessionOpts{
@@ -526,7 +593,7 @@ func (d *Daemon) OpenVault(ctx context.Context, name, passphrase string, source 
 		Logger: d.logger,
 	})
 	if err != nil {
-		return wire.OpenResult{}, err
+		return wire.OpenResult{}, "", err
 	}
 
 	if res.TOFUFingerprint != "" {
@@ -542,8 +609,8 @@ func (d *Daemon) OpenVault(ctx context.Context, name, passphrase string, source 
 	se := d.registerSession(entry, res.Session)
 	d.publishEvent(entry.Name, wire.EventKindStateChanged, "session opened")
 
-	info := d.sessionInfoLocked(entry.Name, se)
-	return wire.OpenResult{Session: &info}, nil
+	info := d.sessionInfoLocked(se)
+	return wire.OpenResult{Session: &info}, se.token, nil
 }
 
 // isDivergent reports whether newer canonical snapshots exist alongside
@@ -586,38 +653,32 @@ func (d *Daemon) persistTOFU(cfg *vault.Config, name, fp string) error {
 func (d *Daemon) registerSession(entry *vault.Entry, s *gpgsmith.Session) *sessionEntry {
 	now := time.Now().UTC()
 	se := &sessionEntry{
+		token:        newSessionToken(),
 		session:      s,
 		entry:        entry,
 		startedAt:    now,
 		lastActiveAt: now,
 	}
 	d.mu.Lock()
-	d.sessions[entry.Name] = se
+	d.sessions[se.token] = se
 	d.mu.Unlock()
-	d.startIdleTimer(entry.Name, se)
+	d.startIdleTimer(se)
 	return se
 }
 
 // ResumeVault implements wire.Backend.
-func (d *Daemon) ResumeVault(ctx context.Context, name, passphrase string, source gpgsmith.LockSource, resume bool) (wire.SessionInfo, error) {
+func (d *Daemon) ResumeVault(ctx context.Context, name, passphrase string, source gpgsmith.LockSource, resume bool) (wire.SessionInfo, string, error) {
 	if d.shuttingDown.Load() {
-		return wire.SessionInfo{}, ErrShuttingDown
+		return wire.SessionInfo{}, "", ErrShuttingDown
 	}
 
 	cfg, err := d.loadConfig()
 	if err != nil {
-		return wire.SessionInfo{}, err
+		return wire.SessionInfo{}, "", err
 	}
 	entry, err := cfg.Resolve(name)
 	if err != nil {
-		return wire.SessionInfo{}, fmt.Errorf("resume vault: %w", err)
-	}
-
-	d.mu.RLock()
-	_, exists := d.sessions[entry.Name]
-	d.mu.RUnlock()
-	if exists {
-		return wire.SessionInfo{}, fmt.Errorf("resume vault: session for %q already open", entry.Name)
+		return wire.SessionInfo{}, "", fmt.Errorf("resume vault: %w", err)
 	}
 
 	hostname, _ := os.Hostname()
@@ -627,7 +688,7 @@ func (d *Daemon) ResumeVault(ctx context.Context, name, passphrase string, sourc
 
 	v, err := vault.NewWithPassphrase(entry.ToConfig(), passphrase, d.logger)
 	if err != nil {
-		return wire.SessionInfo{}, fmt.Errorf("resume vault: %w", err)
+		return wire.SessionInfo{}, "", fmt.Errorf("resume vault: %w", err)
 	}
 
 	eph, _ := gpgsmith.FindEphemeralFor(entry.Path, hostname)
@@ -643,7 +704,7 @@ func (d *Daemon) ResumeVault(ctx context.Context, name, passphrase string, sourc
 			Logger: d.logger,
 		})
 		if openErr != nil {
-			return wire.SessionInfo{}, openErr
+			return wire.SessionInfo{}, "", openErr
 		}
 		if res.TOFUFingerprint != "" {
 			if persistErr := d.persistTOFU(cfg, entry.Name, res.TOFUFingerprint); persistErr != nil {
@@ -655,11 +716,11 @@ func (d *Daemon) ResumeVault(ctx context.Context, name, passphrase string, sourc
 		}
 		se := d.registerSession(entry, res.Session)
 		d.publishEvent(entry.Name, wire.EventKindStateChanged, "session opened")
-		return d.sessionInfoLocked(entry.Name, se), nil
+		return d.sessionInfoLocked(se), se.token, nil
 	}
 
 	if eph == nil {
-		return wire.SessionInfo{}, fmt.Errorf("resume vault: no ephemeral to resume for %q", entry.Name)
+		return wire.SessionInfo{}, "", fmt.Errorf("resume vault: no ephemeral to resume for %q", entry.Name)
 	}
 
 	res, err := gpgsmith.ResumeSession(ctx, v, entry, eph, gpgsmith.SessionOpts{
@@ -667,7 +728,7 @@ func (d *Daemon) ResumeVault(ctx context.Context, name, passphrase string, sourc
 		Logger: d.logger,
 	})
 	if err != nil {
-		return wire.SessionInfo{}, err
+		return wire.SessionInfo{}, "", err
 	}
 	if res.TOFUFingerprint != "" {
 		if persistErr := d.persistTOFU(cfg, entry.Name, res.TOFUFingerprint); persistErr != nil {
@@ -679,12 +740,12 @@ func (d *Daemon) ResumeVault(ctx context.Context, name, passphrase string, sourc
 	}
 	se := d.registerSession(entry, res.Session)
 	d.publishEvent(entry.Name, wire.EventKindStateChanged, "session resumed")
-	return d.sessionInfoLocked(entry.Name, se), nil
+	return d.sessionInfoLocked(se), se.token, nil
 }
 
 // SealVault implements wire.Backend.
-func (d *Daemon) SealVault(ctx context.Context, name, message string) (vault.Snapshot, error) {
-	se, err := d.lookupSession(name)
+func (d *Daemon) SealVault(ctx context.Context, token, message string) (vault.Snapshot, error) {
+	se, err := d.lookupSession(token)
 	if err != nil {
 		return vault.Snapshot{}, err
 	}
@@ -694,10 +755,14 @@ func (d *Daemon) SealVault(ctx context.Context, name, message string) (vault.Sna
 		se.idleTimer.Stop()
 	}
 	s := se.session
+	name := ""
+	if se.entry != nil {
+		name = se.entry.Name
+	}
 	se.mu.Unlock()
 
 	d.mu.Lock()
-	delete(d.sessions, name)
+	delete(d.sessions, token)
 	d.mu.Unlock()
 
 	snap, err := s.Seal(ctx, message)
@@ -709,8 +774,8 @@ func (d *Daemon) SealVault(ctx context.Context, name, message string) (vault.Sna
 }
 
 // DiscardVault implements wire.Backend.
-func (d *Daemon) DiscardVault(ctx context.Context, name string) error {
-	se, err := d.lookupSession(name)
+func (d *Daemon) DiscardVault(ctx context.Context, token string) error {
+	se, err := d.lookupSession(token)
 	if err != nil {
 		return err
 	}
@@ -720,10 +785,14 @@ func (d *Daemon) DiscardVault(ctx context.Context, name string) error {
 		se.idleTimer.Stop()
 	}
 	s := se.session
+	name := ""
+	if se.entry != nil {
+		name = se.entry.Name
+	}
 	se.mu.Unlock()
 
 	d.mu.Lock()
-	delete(d.sessions, name)
+	delete(d.sessions, token)
 	d.mu.Unlock()
 
 	if err := s.Discard(ctx); err != nil {
@@ -783,18 +852,18 @@ func (d *Daemon) ImportVault(ctx context.Context, sourcePath, passphrase, target
 // CreateVault implements wire.Backend. Initializes a brand-new vault
 // registry entry, writes an empty snapshot to disk, opens it, and
 // registers a session for follow-up key generation via KeyService.Create.
-func (d *Daemon) CreateVault(ctx context.Context, name, path, passphrase string) (vault.Snapshot, wire.SessionInfo, error) {
+func (d *Daemon) CreateVault(ctx context.Context, name, path, passphrase string) (vault.Snapshot, wire.SessionInfo, string, error) {
 	if d.shuttingDown.Load() {
-		return vault.Snapshot{}, wire.SessionInfo{}, ErrShuttingDown
+		return vault.Snapshot{}, wire.SessionInfo{}, "", ErrShuttingDown
 	}
 	if name == "" {
-		return vault.Snapshot{}, wire.SessionInfo{}, fmt.Errorf("create vault: name is required")
+		return vault.Snapshot{}, wire.SessionInfo{}, "", fmt.Errorf("create vault: name is required")
 	}
 	if path == "" {
-		return vault.Snapshot{}, wire.SessionInfo{}, fmt.Errorf("create vault: path is required")
+		return vault.Snapshot{}, wire.SessionInfo{}, "", fmt.Errorf("create vault: path is required")
 	}
 	if passphrase == "" {
-		return vault.Snapshot{}, wire.SessionInfo{}, fmt.Errorf("create vault: passphrase is required")
+		return vault.Snapshot{}, wire.SessionInfo{}, "", fmt.Errorf("create vault: passphrase is required")
 	}
 
 	cfg, err := d.loadConfig()
@@ -806,37 +875,37 @@ func (d *Daemon) CreateVault(ctx context.Context, name, path, passphrase string)
 	// Detect existing entry by name — fail to avoid clobbering.
 	for i := range cfg.Vaults {
 		if cfg.Vaults[i].Name == name {
-			return vault.Snapshot{}, wire.SessionInfo{}, fmt.Errorf("create vault: %q already exists in registry", name)
+			return vault.Snapshot{}, wire.SessionInfo{}, "", fmt.Errorf("create vault: %q already exists in registry", name)
 		}
 	}
 
 	entry := vault.Entry{Name: name, Path: path}
 	if addErr := cfg.AddVault(entry); addErr != nil {
-		return vault.Snapshot{}, wire.SessionInfo{}, fmt.Errorf("create vault: %w", addErr)
+		return vault.Snapshot{}, wire.SessionInfo{}, "", fmt.Errorf("create vault: %w", addErr)
 	}
 	if err := d.saveConfig(cfg); err != nil {
-		return vault.Snapshot{}, wire.SessionInfo{}, err
+		return vault.Snapshot{}, wire.SessionInfo{}, "", err
 	}
 
 	v, err := vault.NewWithPassphrase(entry.ToConfig(), passphrase, d.logger)
 	if err != nil {
-		return vault.Snapshot{}, wire.SessionInfo{}, fmt.Errorf("create vault: %w", err)
+		return vault.Snapshot{}, wire.SessionInfo{}, "", fmt.Errorf("create vault: %w", err)
 	}
 	if err := v.Create(ctx); err != nil {
-		return vault.Snapshot{}, wire.SessionInfo{}, fmt.Errorf("create vault: %w", err)
+		return vault.Snapshot{}, wire.SessionInfo{}, "", fmt.Errorf("create vault: %w", err)
 	}
 
 	// Build an empty workdir and seal it as the first canonical so that
 	// OpenSession has something to decrypt.
 	emptyDir, err := vault.SecureTmpDir()
 	if err != nil {
-		return vault.Snapshot{}, wire.SessionInfo{}, fmt.Errorf("create vault: empty workdir: %w", err)
+		return vault.Snapshot{}, wire.SessionInfo{}, "", fmt.Errorf("create vault: empty workdir: %w", err)
 	}
 	defer func() { _ = os.RemoveAll(emptyDir) }()
 
 	snap, err := v.Import(ctx, emptyDir)
 	if err != nil {
-		return vault.Snapshot{}, wire.SessionInfo{}, fmt.Errorf("create vault: initial seal: %w", err)
+		return vault.Snapshot{}, wire.SessionInfo{}, "", fmt.Errorf("create vault: initial seal: %w", err)
 	}
 
 	// Now open it as a proper session.
@@ -845,14 +914,14 @@ func (d *Daemon) CreateVault(ctx context.Context, name, path, passphrase string)
 		Logger: d.logger,
 	})
 	if err != nil {
-		return vault.Snapshot{}, wire.SessionInfo{}, fmt.Errorf("create vault: open session: %w", err)
+		return vault.Snapshot{}, wire.SessionInfo{}, "", fmt.Errorf("create vault: open session: %w", err)
 	}
 
 	se := d.registerSession(&entry, res.Session)
 	d.publishEvent(entry.Name, wire.EventKindStateChanged, "vault created")
 
-	info := d.sessionInfoLocked(entry.Name, se)
-	return snap, info, nil
+	info := d.sessionInfoLocked(se)
+	return snap, info, se.token, nil
 }
 
 // ExportVault implements wire.Backend. Decrypts the latest canonical of
@@ -963,11 +1032,12 @@ func (d *Daemon) TrustVault(_ context.Context, name, fingerprint string) error {
 // ===== KeyService =====
 
 // CreateMasterKey implements wire.Backend.
-func (d *Daemon) CreateMasterKey(ctx context.Context, vaultName string, opts wire.CreateKeyOpts) (string, []gpg.SubKey, error) {
-	se, err := d.lookupSession(vaultName)
+func (d *Daemon) CreateMasterKey(ctx context.Context, token string, opts wire.CreateKeyOpts) (string, []gpg.SubKey, error) {
+	se, err := d.lookupSession(token)
 	if err != nil {
 		return "", nil, err
 	}
+	vaultName := se.entry.Name
 	se.mu.Lock()
 	defer se.mu.Unlock()
 
@@ -1035,11 +1105,12 @@ func (d *Daemon) touchLocked(se *sessionEntry) {
 }
 
 // GenerateSubkeys implements wire.Backend.
-func (d *Daemon) GenerateSubkeys(ctx context.Context, vaultName string) ([]gpg.SubKey, error) {
-	se, err := d.lookupSession(vaultName)
+func (d *Daemon) GenerateSubkeys(ctx context.Context, token string) ([]gpg.SubKey, error) {
+	se, err := d.lookupSession(token)
 	if err != nil {
 		return nil, err
 	}
+	vaultName := se.entry.Name
 	se.mu.Lock()
 	defer se.mu.Unlock()
 
@@ -1069,8 +1140,8 @@ func (d *Daemon) GenerateSubkeys(ctx context.Context, vaultName string) ([]gpg.S
 }
 
 // ListKeys implements wire.Backend.
-func (d *Daemon) ListKeys(ctx context.Context, vaultName string) ([]gpg.SubKey, error) {
-	se, err := d.lookupSession(vaultName)
+func (d *Daemon) ListKeys(ctx context.Context, token string) ([]gpg.SubKey, error) {
+	se, err := d.lookupSession(token)
 	if err != nil {
 		return nil, err
 	}
@@ -1081,11 +1152,12 @@ func (d *Daemon) ListKeys(ctx context.Context, vaultName string) ([]gpg.SubKey, 
 }
 
 // RevokeSubkey implements wire.Backend.
-func (d *Daemon) RevokeSubkey(ctx context.Context, vaultName, keyID string) error {
-	se, err := d.lookupSession(vaultName)
+func (d *Daemon) RevokeSubkey(ctx context.Context, token, keyID string) error {
+	se, err := d.lookupSession(token)
 	if err != nil {
 		return err
 	}
+	vaultName := se.entry.Name
 	se.mu.Lock()
 	defer se.mu.Unlock()
 
@@ -1111,8 +1183,8 @@ func (d *Daemon) RevokeSubkey(ctx context.Context, vaultName, keyID string) erro
 }
 
 // ExportKey implements wire.Backend.
-func (d *Daemon) ExportKey(ctx context.Context, vaultName string) (string, error) {
-	se, err := d.lookupSession(vaultName)
+func (d *Daemon) ExportKey(ctx context.Context, token string) (string, error) {
+	se, err := d.lookupSession(token)
 	if err != nil {
 		return "", err
 	}
@@ -1132,8 +1204,8 @@ func (d *Daemon) ExportKey(ctx context.Context, vaultName string) (string, error
 }
 
 // SSHPubKey implements wire.Backend.
-func (d *Daemon) SSHPubKey(ctx context.Context, vaultName string) (string, error) {
-	se, err := d.lookupSession(vaultName)
+func (d *Daemon) SSHPubKey(ctx context.Context, token string) (string, error) {
+	se, err := d.lookupSession(token)
 	if err != nil {
 		return "", err
 	}
@@ -1150,8 +1222,8 @@ func (d *Daemon) SSHPubKey(ctx context.Context, vaultName string) (string, error
 }
 
 // KeyStatus implements wire.Backend.
-func (d *Daemon) KeyStatus(ctx context.Context, vaultName string) ([]gpg.SubKey, *gpg.CardInfo, error) {
-	se, err := d.lookupSession(vaultName)
+func (d *Daemon) KeyStatus(ctx context.Context, token string) ([]gpg.SubKey, *gpg.CardInfo, error) {
+	se, err := d.lookupSession(token)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -1171,8 +1243,8 @@ func (d *Daemon) KeyStatus(ctx context.Context, vaultName string) ([]gpg.SubKey,
 // ===== IdentityService =====
 
 // ListIdentities implements wire.Backend.
-func (d *Daemon) ListIdentities(ctx context.Context, vaultName string) ([]gpg.UID, error) {
-	se, err := d.lookupSession(vaultName)
+func (d *Daemon) ListIdentities(ctx context.Context, token string) ([]gpg.UID, error) {
+	se, err := d.lookupSession(token)
 	if err != nil {
 		return nil, err
 	}
@@ -1189,11 +1261,12 @@ func (d *Daemon) ListIdentities(ctx context.Context, vaultName string) ([]gpg.UI
 }
 
 // AddIdentity implements wire.Backend.
-func (d *Daemon) AddIdentity(ctx context.Context, vaultName, uid string) error {
-	se, err := d.lookupSession(vaultName)
+func (d *Daemon) AddIdentity(ctx context.Context, token, uid string) error {
+	se, err := d.lookupSession(token)
 	if err != nil {
 		return err
 	}
+	vaultName := se.entry.Name
 	se.mu.Lock()
 	defer se.mu.Unlock()
 
@@ -1218,11 +1291,12 @@ func (d *Daemon) AddIdentity(ctx context.Context, vaultName, uid string) error {
 }
 
 // RevokeIdentity implements wire.Backend.
-func (d *Daemon) RevokeIdentity(ctx context.Context, vaultName, uid string) error {
-	se, err := d.lookupSession(vaultName)
+func (d *Daemon) RevokeIdentity(ctx context.Context, token, uid string) error {
+	se, err := d.lookupSession(token)
 	if err != nil {
 		return err
 	}
+	vaultName := se.entry.Name
 	se.mu.Lock()
 	defer se.mu.Unlock()
 
@@ -1247,11 +1321,12 @@ func (d *Daemon) RevokeIdentity(ctx context.Context, vaultName, uid string) erro
 }
 
 // PrimaryIdentity implements wire.Backend.
-func (d *Daemon) PrimaryIdentity(ctx context.Context, vaultName, uid string) error {
-	se, err := d.lookupSession(vaultName)
+func (d *Daemon) PrimaryIdentity(ctx context.Context, token, uid string) error {
+	se, err := d.lookupSession(token)
 	if err != nil {
 		return err
 	}
+	vaultName := se.entry.Name
 	se.mu.Lock()
 	defer se.mu.Unlock()
 
@@ -1300,11 +1375,12 @@ func (d *Daemon) republish(ctx context.Context, client *gpg.Client, masterFP str
 // ===== CardService =====
 
 // ProvisionCard implements wire.Backend.
-func (d *Daemon) ProvisionCard(ctx context.Context, vaultName string, opts wire.ProvisionCardOpts) (gpg.YubiKeyEntry, string, error) {
-	se, err := d.lookupSession(vaultName)
+func (d *Daemon) ProvisionCard(ctx context.Context, token string, opts wire.ProvisionCardOpts) (gpg.YubiKeyEntry, string, error) {
+	se, err := d.lookupSession(token)
 	if err != nil {
 		return gpg.YubiKeyEntry{}, "", err
 	}
+	vaultName := se.entry.Name
 	se.mu.Lock()
 	defer se.mu.Unlock()
 
@@ -1396,11 +1472,12 @@ func (d *Daemon) ProvisionCard(ctx context.Context, vaultName string, opts wire.
 }
 
 // RotateCard implements wire.Backend.
-func (d *Daemon) RotateCard(ctx context.Context, vaultName, label string) (gpg.YubiKeyEntry, error) {
-	se, err := d.lookupSession(vaultName)
+func (d *Daemon) RotateCard(ctx context.Context, token, label string) (gpg.YubiKeyEntry, error) {
+	se, err := d.lookupSession(token)
 	if err != nil {
 		return gpg.YubiKeyEntry{}, err
 	}
+	vaultName := se.entry.Name
 	se.mu.Lock()
 	defer se.mu.Unlock()
 
@@ -1479,11 +1556,12 @@ func (d *Daemon) RotateCard(ctx context.Context, vaultName, label string) (gpg.Y
 }
 
 // RevokeCard implements wire.Backend.
-func (d *Daemon) RevokeCard(ctx context.Context, vaultName, label string) error {
-	se, err := d.lookupSession(vaultName)
+func (d *Daemon) RevokeCard(ctx context.Context, token, label string) error {
+	se, err := d.lookupSession(token)
 	if err != nil {
 		return err
 	}
+	vaultName := se.entry.Name
 	se.mu.Lock()
 	defer se.mu.Unlock()
 
@@ -1523,8 +1601,8 @@ func (d *Daemon) RevokeCard(ctx context.Context, vaultName, label string) error 
 }
 
 // CardInventory implements wire.Backend.
-func (d *Daemon) CardInventory(_ context.Context, vaultName string) ([]gpg.YubiKeyEntry, error) {
-	se, err := d.lookupSession(vaultName)
+func (d *Daemon) CardInventory(_ context.Context, token string) ([]gpg.YubiKeyEntry, error) {
+	se, err := d.lookupSession(token)
 	if err != nil {
 		return nil, err
 	}
@@ -1540,11 +1618,12 @@ func (d *Daemon) CardInventory(_ context.Context, vaultName string) ([]gpg.YubiK
 }
 
 // DiscoverCard implements wire.Backend.
-func (d *Daemon) DiscoverCard(ctx context.Context, vaultName, label, description string) (gpg.YubiKeyEntry, bool, error) {
-	se, err := d.lookupSession(vaultName)
+func (d *Daemon) DiscoverCard(ctx context.Context, token, label, description string) (gpg.YubiKeyEntry, bool, error) {
+	se, err := d.lookupSession(token)
 	if err != nil {
 		return gpg.YubiKeyEntry{}, false, err
 	}
+	vaultName := se.entry.Name
 	se.mu.Lock()
 	defer se.mu.Unlock()
 
@@ -1587,8 +1666,8 @@ func (d *Daemon) DiscoverCard(ctx context.Context, vaultName, label, description
 // ===== ServerService =====
 
 // ListPublishServers implements wire.Backend.
-func (d *Daemon) ListPublishServers(_ context.Context, vaultName string) ([]gpg.ServerEntry, error) {
-	se, err := d.lookupSession(vaultName)
+func (d *Daemon) ListPublishServers(_ context.Context, token string) ([]gpg.ServerEntry, error) {
+	se, err := d.lookupSession(token)
 	if err != nil {
 		return nil, err
 	}
@@ -1603,8 +1682,8 @@ func (d *Daemon) ListPublishServers(_ context.Context, vaultName string) ([]gpg.
 }
 
 // AddPublishServer implements wire.Backend.
-func (d *Daemon) AddPublishServer(_ context.Context, vaultName, alias, url string) error {
-	se, err := d.lookupSession(vaultName)
+func (d *Daemon) AddPublishServer(_ context.Context, token, alias, url string) error {
+	se, err := d.lookupSession(token)
 	if err != nil {
 		return err
 	}
@@ -1636,8 +1715,8 @@ func (d *Daemon) AddPublishServer(_ context.Context, vaultName, alias, url strin
 }
 
 // RemovePublishServer implements wire.Backend.
-func (d *Daemon) RemovePublishServer(_ context.Context, vaultName, alias string) error {
-	se, err := d.lookupSession(vaultName)
+func (d *Daemon) RemovePublishServer(_ context.Context, token, alias string) error {
+	se, err := d.lookupSession(token)
 	if err != nil {
 		return err
 	}
@@ -1670,17 +1749,17 @@ func (d *Daemon) RemovePublishServer(_ context.Context, vaultName, alias string)
 }
 
 // EnablePublishServer implements wire.Backend.
-func (d *Daemon) EnablePublishServer(_ context.Context, vaultName, alias string) error {
-	return d.setPublishEnabled(vaultName, alias, true)
+func (d *Daemon) EnablePublishServer(_ context.Context, token, alias string) error {
+	return d.setPublishEnabled(token, alias, true)
 }
 
 // DisablePublishServer implements wire.Backend.
-func (d *Daemon) DisablePublishServer(_ context.Context, vaultName, alias string) error {
-	return d.setPublishEnabled(vaultName, alias, false)
+func (d *Daemon) DisablePublishServer(_ context.Context, token, alias string) error {
+	return d.setPublishEnabled(token, alias, false)
 }
 
-func (d *Daemon) setPublishEnabled(vaultName, alias string, enabled bool) error {
-	se, err := d.lookupSession(vaultName)
+func (d *Daemon) setPublishEnabled(token, alias string, enabled bool) error {
+	se, err := d.lookupSession(token)
 	if err != nil {
 		return err
 	}
@@ -1705,8 +1784,8 @@ func (d *Daemon) setPublishEnabled(vaultName, alias string, enabled bool) error 
 }
 
 // Publish implements wire.Backend.
-func (d *Daemon) Publish(ctx context.Context, vaultName string, aliases []string) ([]wire.PublishResult, error) {
-	se, err := d.lookupSession(vaultName)
+func (d *Daemon) Publish(ctx context.Context, token string, aliases []string) ([]wire.PublishResult, error) {
+	se, err := d.lookupSession(token)
 	if err != nil {
 		return nil, err
 	}
@@ -1763,8 +1842,8 @@ func (d *Daemon) Publish(ctx context.Context, vaultName string, aliases []string
 }
 
 // LookupPublished implements wire.Backend.
-func (d *Daemon) LookupPublished(ctx context.Context, vaultName string) ([]wire.LookupResult, error) {
-	se, err := d.lookupSession(vaultName)
+func (d *Daemon) LookupPublished(ctx context.Context, token string) ([]wire.LookupResult, error) {
+	se, err := d.lookupSession(token)
 	if err != nil {
 		return nil, err
 	}
@@ -1800,8 +1879,8 @@ func (d *Daemon) LookupPublished(ctx context.Context, vaultName string) ([]wire.
 // ===== AuditService =====
 
 // ShowAudit implements wire.Backend.
-func (d *Daemon) ShowAudit(_ context.Context, vaultName string, last int) ([]audit.Entry, error) {
-	se, err := d.lookupSession(vaultName)
+func (d *Daemon) ShowAudit(_ context.Context, token string, last int) ([]audit.Entry, error) {
+	se, err := d.lookupSession(token)
 	if err != nil {
 		return nil, err
 	}
@@ -1821,13 +1900,14 @@ func (d *Daemon) ShowAudit(_ context.Context, vaultName string, last int) ([]aud
 // ===== EventService =====
 
 // SubscribeEvents implements wire.Backend. Returns a channel that
-// receives events for the named vault (or all vaults if vaultName is
-// empty). The channel is closed when ctx is canceled or the daemon is
+// receives events. If token names an open session the channel is
+// filtered to that vault; if token is empty the subscriber sees all
+// events. The channel is closed when ctx is canceled or the daemon is
 // shutting down.
-func (d *Daemon) SubscribeEvents(ctx context.Context, vaultName string) (<-chan wire.Event, error) {
-	topic := "vault:" + vaultName
-	if vaultName == "" {
-		topic = "*"
+func (d *Daemon) SubscribeEvents(ctx context.Context, token string) (<-chan wire.Event, error) {
+	topic := "*"
+	if vaultName := d.vaultNameFromToken(token); vaultName != "" {
+		topic = "vault:" + vaultName
 	}
 	const subBuf = 32
 	_, ptrCh, unsubscribe := d.broker.Subscribe(topic, subBuf)

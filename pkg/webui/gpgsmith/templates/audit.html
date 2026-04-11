@@ -1,0 +1,27 @@
+{{define "audit"}}
+{{template "header" .}}
+<h2>Audit log (last {{.Audit.Limit}})</h2>
+{{- if not .Audit.Entries}}
+<p class="empty">No audit entries.</p>
+{{- else}}
+<table>
+    <thead>
+        <tr>
+            <th>Timestamp</th>
+            <th>Action</th>
+            <th>Details</th>
+        </tr>
+    </thead>
+    <tbody>
+        {{- range .Audit.Entries}}
+        <tr>
+            <td class="mono">{{.Timestamp}}</td>
+            <td>{{.Action}}</td>
+            <td>{{template "dash" .Details}}</td>
+        </tr>
+        {{- end}}
+    </tbody>
+</table>
+{{- end}}
+{{template "footer" .}}
+{{end}}

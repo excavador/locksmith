@@ -13,6 +13,7 @@ import (
 	"github.com/urfave/cli/v3"
 
 	v1 "github.com/excavador/locksmith/pkg/gen/gpgsmith/v1"
+	"github.com/excavador/locksmith/pkg/wire"
 )
 
 func vaultCmd() *cli.Command {
@@ -30,29 +31,34 @@ func vaultCmd() *cli.Command {
 			},
 			{
 				Name:      "open",
-				Usage:     "open a vault by name",
+				Usage:     "open a vault by name and drop into a wrapped subshell",
 				ArgsUsage: "<name>",
-				Action:    vaultOpen,
+				Flags: []cli.Flag{
+					&cli.BoolFlag{
+						Name:  "no-shell",
+						Usage: "print `export GPGSMITH_SESSION=<token>` to stdout instead of spawning a subshell",
+					},
+				},
+				Action: vaultOpen,
 			},
 			{
 				Name:      "seal",
-				Usage:     "seal an open vault",
-				ArgsUsage: "[<name>]",
+				Usage:     "seal the current session (bound via GPGSMITH_SESSION)",
+				ArgsUsage: "",
 				Flags: []cli.Flag{
 					&cli.StringFlag{Name: "message", Usage: "seal message", Value: ""},
 				},
 				Action: vaultSeal,
 			},
 			{
-				Name:      "discard",
-				Usage:     "discard an open vault without sealing",
-				ArgsUsage: "[<name>]",
-				Action:    vaultDiscard,
+				Name:   "discard",
+				Usage:  "discard the current session without sealing",
+				Action: vaultDiscard,
 			},
 			{
 				Name:      "snapshots",
 				Usage:     "list canonical snapshots of a vault",
-				ArgsUsage: "[<name>]",
+				ArgsUsage: "<name>",
 				Action:    vaultSnapshots,
 			},
 			{
@@ -185,6 +191,14 @@ func vaultCreate(ctx context.Context, cmd *cli.Command) error {
 		return fmt.Errorf("vault create: %w", err)
 	}
 	fmt.Fprintf(os.Stderr, "Created %s (initial snapshot: %s)\n", name, filepath.Base(resp.Msg.GetSnapshot().GetFilename()))
+
+	// Bind the new session's token into this process's env so any
+	// follow-up command issued by this same gpgsmith invocation
+	// (typically none) inherits it via the client interceptor.
+	if tok := resp.Msg.GetToken(); tok != "" {
+		_ = os.Setenv(wire.SessionEnvVar, tok)
+		_ = os.Setenv(wire.SessionVaultNameEnvVar, name)
+	}
 	return nil
 }
 
@@ -214,6 +228,8 @@ func vaultOpen(ctx context.Context, cmd *cli.Command) error {
 		return fmt.Errorf("vault open: %w", err)
 	}
 
+	token := resp.Msg.GetToken()
+
 	if ra := resp.Msg.GetResumeAvailable(); ra != nil {
 		fmt.Fprintf(os.Stderr, "A recoverable session exists for %q on %s (last heartbeat %s).\n",
 			name, ra.GetHostname(), ra.GetLastHeartbeat().AsTime().Format(time.RFC3339))
@@ -222,16 +238,17 @@ func vaultOpen(ctx context.Context, cmd *cli.Command) error {
 			return perr
 		}
 		ans = strings.ToLower(strings.TrimSpace(ans))
+		var resumeResp *connect.Response[v1.ResumeResponse]
 		switch ans {
 		case "", "y", "yes":
-			_, err = client.Vault.Resume(ctx, connect.NewRequest(&v1.ResumeRequest{
+			resumeResp, err = client.Vault.Resume(ctx, connect.NewRequest(&v1.ResumeRequest{
 				VaultName:  name,
 				Passphrase: passphrase,
 				Source:     v1.LockSource_LOCK_SOURCE_CLI,
 				Action:     v1.ResumeRequest_ACTION_RESUME,
 			}))
 		case "n", "no", "discard":
-			_, err = client.Vault.Resume(ctx, connect.NewRequest(&v1.ResumeRequest{
+			resumeResp, err = client.Vault.Resume(ctx, connect.NewRequest(&v1.ResumeRequest{
 				VaultName:  name,
 				Passphrase: passphrase,
 				Source:     v1.LockSource_LOCK_SOURCE_CLI,
@@ -243,10 +260,27 @@ func vaultOpen(ctx context.Context, cmd *cli.Command) error {
 		if err != nil {
 			return fmt.Errorf("vault open: %w", err)
 		}
+		token = resumeResp.Msg.GetToken()
 	}
 
-	fmt.Fprintf(os.Stderr, "opened %s\n", name)
-	return nil
+	if token == "" {
+		return fmt.Errorf("vault open: daemon returned empty session token")
+	}
+
+	if cmd.Bool("no-shell") {
+		// Scripted mode: print export statements for `eval $(...)`.
+		fmt.Printf("export %s=%s;\n", wire.SessionEnvVar, shellEscapeSingleQuote(token))
+		fmt.Printf("export %s=%s;\n", wire.SessionVaultNameEnvVar, shellEscapeSingleQuote(name))
+		fmt.Fprintf(os.Stderr, "bound session token for %q\n", name)
+		return nil
+	}
+
+	// Interactive mode: spawn a wrapped subshell and block on it.
+	// When the subshell exits, the daemon's idle timer will take care
+	// of sealing — we deliberately do NOT seal on exit here, because
+	// users frequently open `gpgsmith vault open` in one pane and
+	// continue working on the same session from others.
+	return runWrappedSubshell(ctx, name, token)
 }
 
 func vaultSeal(ctx context.Context, cmd *cli.Command) error {
@@ -256,12 +290,8 @@ func vaultSeal(ctx context.Context, cmd *cli.Command) error {
 	}
 	defer client.Close()
 
-	name := cmd.Args().First()
-	if name == "" {
-		name, err = resolveVaultName(ctx, client, cmd)
-		if err != nil {
-			return fmt.Errorf("vault seal: %w", err)
-		}
+	if err := ensureSessionToken(ctx, client); err != nil {
+		return fmt.Errorf("vault seal: %w", err)
 	}
 
 	message := cmd.String("message")
@@ -270,53 +300,44 @@ func vaultSeal(ctx context.Context, cmd *cli.Command) error {
 	}
 
 	resp, err := client.Vault.Seal(ctx, connect.NewRequest(&v1.SealRequest{
-		VaultName: name,
-		Message:   message,
+		Message: message,
 	}))
 	if err != nil {
 		return fmt.Errorf("vault seal: %w", err)
 	}
-	fmt.Fprintf(os.Stderr, "sealed %s: %s\n", name, filepath.Base(resp.Msg.GetSnapshot().GetFilename()))
+	fmt.Fprintf(os.Stderr, "sealed: %s\n", filepath.Base(resp.Msg.GetSnapshot().GetFilename()))
 	return nil
 }
 
-func vaultDiscard(ctx context.Context, cmd *cli.Command) error {
+func vaultDiscard(ctx context.Context, _ *cli.Command) error {
 	client, err := ensureClient(ctx)
 	if err != nil {
 		return fmt.Errorf("vault discard: %w", err)
 	}
 	defer client.Close()
 
-	name := cmd.Args().First()
-	if name == "" {
-		name, err = resolveVaultName(ctx, client, cmd)
-		if err != nil {
-			return fmt.Errorf("vault discard: %w", err)
-		}
-	}
-
-	_, err = client.Vault.Discard(ctx, connect.NewRequest(&v1.DiscardRequest{VaultName: name}))
-	if err != nil {
+	if err := ensureSessionToken(ctx, client); err != nil {
 		return fmt.Errorf("vault discard: %w", err)
 	}
-	fmt.Fprintf(os.Stderr, "discarded %s\n", name)
+
+	if _, err := client.Vault.Discard(ctx, connect.NewRequest(&v1.DiscardRequest{})); err != nil {
+		return fmt.Errorf("vault discard: %w", err)
+	}
+	fmt.Fprintln(os.Stderr, "discarded")
 	return nil
 }
 
 func vaultSnapshots(ctx context.Context, cmd *cli.Command) error {
+	name := cmd.Args().First()
+	if name == "" {
+		return fmt.Errorf("vault snapshots: missing <name>")
+	}
+
 	client, err := ensureClient(ctx)
 	if err != nil {
 		return fmt.Errorf("vault snapshots: %w", err)
 	}
 	defer client.Close()
-
-	name := cmd.Args().First()
-	if name == "" {
-		name, err = resolveVaultName(ctx, client, cmd)
-		if err != nil {
-			return fmt.Errorf("vault snapshots: %w", err)
-		}
-	}
 
 	resp, err := client.Vault.Snapshots(ctx, connect.NewRequest(&v1.SnapshotsRequest{VaultName: name}))
 	if err != nil {

@@ -29,12 +29,12 @@ type (
 		statusReturn DaemonStatus
 
 		listIdentitiesCalls  int
-		listIdentitiesArg    string
+		listIdentitiesToken  string
 		listIdentitiesReturn []gpg.UID
 		listIdentitiesErr    error
 
 		addIdentityCalls int
-		addIdentityVault string
+		addIdentityToken string
 		addIdentityUID   string
 
 		subscribeEvents chan Event
@@ -50,6 +50,9 @@ func (f *fakeBackend) DaemonStatus(_ context.Context) (DaemonStatus, error) {
 }
 func (f *fakeBackend) DaemonShutdown(context.Context, int) error           { return errUnimplemented }
 func (f *fakeBackend) ListSessions(context.Context) ([]SessionInfo, error) { return nil, nil }
+func (f *fakeBackend) ListSessionTokens(context.Context) ([]SessionTokenEntry, error) {
+	return nil, nil
+}
 
 func (f *fakeBackend) ListVaults(context.Context) ([]vault.Entry, string, error) {
 	return nil, "", errUnimplemented
@@ -57,11 +60,11 @@ func (f *fakeBackend) ListVaults(context.Context) ([]vault.Entry, string, error)
 func (f *fakeBackend) StatusVaults(context.Context) ([]SessionInfo, []ResumeOption, error) {
 	return nil, nil, errUnimplemented
 }
-func (f *fakeBackend) OpenVault(context.Context, string, string, gpgsmith.LockSource) (OpenResult, error) {
-	return OpenResult{}, errUnimplemented
+func (f *fakeBackend) OpenVault(context.Context, string, string, gpgsmith.LockSource) (OpenResult, string, error) {
+	return OpenResult{}, "", errUnimplemented
 }
-func (f *fakeBackend) ResumeVault(context.Context, string, string, gpgsmith.LockSource, bool) (SessionInfo, error) {
-	return SessionInfo{}, errUnimplemented
+func (f *fakeBackend) ResumeVault(context.Context, string, string, gpgsmith.LockSource, bool) (SessionInfo, string, error) {
+	return SessionInfo{}, "", errUnimplemented
 }
 func (f *fakeBackend) SealVault(context.Context, string, string) (vault.Snapshot, error) {
 	return vault.Snapshot{}, errUnimplemented
@@ -73,8 +76,8 @@ func (f *fakeBackend) Snapshots(context.Context, string) ([]vault.Snapshot, erro
 func (f *fakeBackend) ImportVault(context.Context, string, string, string) (vault.Snapshot, error) {
 	return vault.Snapshot{}, errUnimplemented
 }
-func (f *fakeBackend) CreateVault(context.Context, string, string, string) (vault.Snapshot, SessionInfo, error) {
-	return vault.Snapshot{}, SessionInfo{}, errUnimplemented
+func (f *fakeBackend) CreateVault(context.Context, string, string, string) (vault.Snapshot, SessionInfo, string, error) {
+	return vault.Snapshot{}, SessionInfo{}, "", errUnimplemented
 }
 func (f *fakeBackend) ExportVault(context.Context, string, string, string) (string, error) {
 	return "", errUnimplemented
@@ -101,14 +104,14 @@ func (f *fakeBackend) KeyStatus(context.Context, string) ([]gpg.SubKey, *gpg.Car
 	return nil, nil, errUnimplemented
 }
 
-func (f *fakeBackend) ListIdentities(_ context.Context, vaultName string) ([]gpg.UID, error) {
+func (f *fakeBackend) ListIdentities(_ context.Context, token string) ([]gpg.UID, error) {
 	f.listIdentitiesCalls++
-	f.listIdentitiesArg = vaultName
+	f.listIdentitiesToken = token
 	return f.listIdentitiesReturn, f.listIdentitiesErr
 }
-func (f *fakeBackend) AddIdentity(_ context.Context, vaultName, uid string) error {
+func (f *fakeBackend) AddIdentity(_ context.Context, token, uid string) error {
 	f.addIdentityCalls++
-	f.addIdentityVault = vaultName
+	f.addIdentityToken = token
 	f.addIdentityUID = uid
 	return nil
 }
@@ -218,6 +221,17 @@ func TestRoundTripDaemonStatus(t *testing.T) {
 	}
 }
 
+// newSessionReq builds a proto request with the Gpgsmith-Session header
+// pre-stamped — the test equivalent of what the env-var client
+// interceptor does in production.
+func newSessionReq[T any](msg *T, token string) *connect.Request[T] {
+	req := connect.NewRequest(msg)
+	if token != "" {
+		req.Header().Set(SessionHeader, token)
+	}
+	return req
+}
+
 func TestRoundTripIdentityList(t *testing.T) {
 	created := time.Date(2026, 4, 10, 14, 0, 0, 0, time.UTC)
 	revoked := time.Date(2026, 4, 10, 14, 32, 0, 0, time.UTC)
@@ -230,9 +244,7 @@ func TestRoundTripIdentityList(t *testing.T) {
 	client, teardown := startTestServer(t, backend)
 	defer teardown()
 
-	resp, err := client.Identity.List(context.Background(), connect.NewRequest(&v1.ListIdentitiesRequest{
-		VaultName: "personal",
-	}))
+	resp, err := client.Identity.List(context.Background(), newSessionReq(&v1.ListIdentitiesRequest{}, "tok-personal"))
 	if err != nil {
 		t.Fatalf("Identity.List: %v", err)
 	}
@@ -240,8 +252,8 @@ func TestRoundTripIdentityList(t *testing.T) {
 	if backend.listIdentitiesCalls != 1 {
 		t.Errorf("ListIdentities called %d times, want 1", backend.listIdentitiesCalls)
 	}
-	if backend.listIdentitiesArg != "personal" {
-		t.Errorf("vault arg = %q, want personal", backend.listIdentitiesArg)
+	if backend.listIdentitiesToken != "tok-personal" {
+		t.Errorf("token arg = %q, want tok-personal", backend.listIdentitiesToken)
 	}
 
 	got := resp.Msg.Identities
@@ -265,21 +277,38 @@ func TestRoundTripIdentityAdd(t *testing.T) {
 	client, teardown := startTestServer(t, backend)
 	defer teardown()
 
-	_, err := client.Identity.Add(context.Background(), connect.NewRequest(&v1.AddIdentityRequest{
-		VaultName: "work",
-		Uid:       "New User <new@example.com>",
-	}))
+	_, err := client.Identity.Add(context.Background(), newSessionReq(&v1.AddIdentityRequest{
+		Uid: "New User <new@example.com>",
+	}, "tok-work"))
 	if err != nil {
 		t.Fatalf("Identity.Add: %v", err)
 	}
 	if backend.addIdentityCalls != 1 {
 		t.Errorf("AddIdentity called %d times, want 1", backend.addIdentityCalls)
 	}
-	if backend.addIdentityVault != "work" {
-		t.Errorf("vault = %q, want work", backend.addIdentityVault)
+	if backend.addIdentityToken != "tok-work" {
+		t.Errorf("token = %q, want tok-work", backend.addIdentityToken)
 	}
 	if backend.addIdentityUID != "New User <new@example.com>" {
 		t.Errorf("uid = %q", backend.addIdentityUID)
+	}
+}
+
+func TestRoundTripMissingSessionToken(t *testing.T) {
+	backend := &fakeBackend{}
+	client, teardown := startTestServer(t, backend)
+	defer teardown()
+
+	_, err := client.Identity.List(context.Background(), connect.NewRequest(&v1.ListIdentitiesRequest{}))
+	if err == nil {
+		t.Fatal("expected unauthenticated error for missing session header")
+	}
+	var connectErr *connect.Error
+	if !errors.As(err, &connectErr) {
+		t.Fatalf("expected *connect.Error, got %T: %v", err, err)
+	}
+	if connectErr.Code() != connect.CodeUnauthenticated {
+		t.Errorf("code = %v, want %v", connectErr.Code(), connect.CodeUnauthenticated)
 	}
 }
 
@@ -290,9 +319,7 @@ func TestRoundTripBackendError(t *testing.T) {
 	client, teardown := startTestServer(t, backend)
 	defer teardown()
 
-	_, err := client.Identity.List(context.Background(), connect.NewRequest(&v1.ListIdentitiesRequest{
-		VaultName: "missing",
-	}))
+	_, err := client.Identity.List(context.Background(), newSessionReq(&v1.ListIdentitiesRequest{}, "tok-missing"))
 	if err == nil {
 		t.Fatal("expected error from backend")
 	}
@@ -352,5 +379,22 @@ func TestHandlerRespondsToKnownPath(t *testing.T) {
 
 	if resp.StatusCode == http.StatusNotFound {
 		t.Errorf("status 404 for known Connect path: routing is broken")
+	}
+}
+
+func TestEncodeDecodeSessionTokens(t *testing.T) {
+	in := []SessionTokenEntry{
+		{Token: "abc123", VaultName: "work"},
+		{Token: "def456", VaultName: "personal"},
+	}
+	encoded := encodeSessionTokens(in)
+	got := DecodeSessionTokens(encoded)
+	if len(got) != len(in) {
+		t.Fatalf("decoded %d, want %d", len(got), len(in))
+	}
+	for i := range in {
+		if got[i] != in[i] {
+			t.Errorf("entry %d: got %+v, want %+v", i, got[i], in[i])
+		}
 	}
 }

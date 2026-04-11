@@ -20,8 +20,12 @@ func newIdentityHandler(b Backend) *identityHandler {
 	return &identityHandler{backend: b}
 }
 
-func (h *identityHandler) List(ctx context.Context, req *connect.Request[v1.ListIdentitiesRequest]) (*connect.Response[v1.ListIdentitiesResponse], error) {
-	uids, err := h.backend.ListIdentities(ctx, req.Msg.VaultName)
+func (h *identityHandler) List(ctx context.Context, _ *connect.Request[v1.ListIdentitiesRequest]) (*connect.Response[v1.ListIdentitiesResponse], error) {
+	token, ok := TokenFromContext(ctx)
+	if !ok {
+		return nil, errMissingSessionToken()
+	}
+	uids, err := h.backend.ListIdentities(ctx, token)
 	if err != nil {
 		return nil, connectErr(err)
 	}
@@ -31,21 +35,33 @@ func (h *identityHandler) List(ctx context.Context, req *connect.Request[v1.List
 }
 
 func (h *identityHandler) Add(ctx context.Context, req *connect.Request[v1.AddIdentityRequest]) (*connect.Response[v1.AddIdentityResponse], error) {
-	if err := h.backend.AddIdentity(ctx, req.Msg.VaultName, req.Msg.Uid); err != nil {
+	token, ok := TokenFromContext(ctx)
+	if !ok {
+		return nil, errMissingSessionToken()
+	}
+	if err := h.backend.AddIdentity(ctx, token, req.Msg.Uid); err != nil {
 		return nil, connectErr(err)
 	}
 	return connect.NewResponse(&v1.AddIdentityResponse{}), nil
 }
 
 func (h *identityHandler) Revoke(ctx context.Context, req *connect.Request[v1.RevokeIdentityRequest]) (*connect.Response[v1.RevokeIdentityResponse], error) {
-	if err := h.backend.RevokeIdentity(ctx, req.Msg.VaultName, req.Msg.Uid); err != nil {
+	token, ok := TokenFromContext(ctx)
+	if !ok {
+		return nil, errMissingSessionToken()
+	}
+	if err := h.backend.RevokeIdentity(ctx, token, req.Msg.Uid); err != nil {
 		return nil, connectErr(err)
 	}
 	return connect.NewResponse(&v1.RevokeIdentityResponse{}), nil
 }
 
 func (h *identityHandler) Primary(ctx context.Context, req *connect.Request[v1.PrimaryIdentityRequest]) (*connect.Response[v1.PrimaryIdentityResponse], error) {
-	if err := h.backend.PrimaryIdentity(ctx, req.Msg.VaultName, req.Msg.Uid); err != nil {
+	token, ok := TokenFromContext(ctx)
+	if !ok {
+		return nil, errMissingSessionToken()
+	}
+	if err := h.backend.PrimaryIdentity(ctx, token, req.Msg.Uid); err != nil {
 		return nil, connectErr(err)
 	}
 	return connect.NewResponse(&v1.PrimaryIdentityResponse{}), nil

@@ -40,9 +40,9 @@ const (
 // EventServiceClient is a client for the gpgsmith.v1.EventService service.
 type EventServiceClient interface {
 	// Subscribe opens a server-streaming RPC. The daemon emits events for
-	// the requested vault until the client disconnects. If vault_name is
-	// empty, the daemon emits events for ALL vaults the caller has access
-	// to (currently: all of them).
+	// the session identified by the Gpgsmith-Session header. If the header
+	// is absent, the daemon emits events for ALL sessions the caller has
+	// access to (currently: all of them).
 	Subscribe(context.Context, *connect.Request[v1.SubscribeRequest]) (*connect.ServerStreamForClient[v1.Event], error)
 }
 
@@ -79,9 +79,9 @@ func (c *eventServiceClient) Subscribe(ctx context.Context, req *connect.Request
 // EventServiceHandler is an implementation of the gpgsmith.v1.EventService service.
 type EventServiceHandler interface {
 	// Subscribe opens a server-streaming RPC. The daemon emits events for
-	// the requested vault until the client disconnects. If vault_name is
-	// empty, the daemon emits events for ALL vaults the caller has access
-	// to (currently: all of them).
+	// the session identified by the Gpgsmith-Session header. If the header
+	// is absent, the daemon emits events for ALL sessions the caller has
+	// access to (currently: all of them).
 	Subscribe(context.Context, *connect.Request[v1.SubscribeRequest], *connect.ServerStream[v1.Event]) error
 }
 

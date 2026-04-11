@@ -1,0 +1,51 @@
+{{define "servers"}}
+{{template "header" .}}
+<h2>Keyservers</h2>
+{{- if not .Servers.Servers}}
+<p class="empty">No publish servers configured.</p>
+{{- else}}
+<table>
+    <thead>
+        <tr>
+            <th>Alias</th>
+            <th>Type</th>
+            <th>URL</th>
+            <th>Enabled</th>
+        </tr>
+    </thead>
+    <tbody>
+        {{- range .Servers.Servers}}
+        <tr>
+            <td><code>{{.Alias}}</code></td>
+            <td>{{.Type}}</td>
+            <td class="mono">{{.URL}}</td>
+            <td>{{if .Enabled}}yes{{else}}no{{end}}</td>
+        </tr>
+        {{- end}}
+    </tbody>
+</table>
+{{- end}}
+
+<h2>Lookup results</h2>
+{{- if not .Servers.Lookup}}
+<p class="empty">No lookup results cached. Publish the master key with <code>gpgsmith server publish</code> first.</p>
+{{- else}}
+<table>
+    <thead>
+        <tr>
+            <th>URL</th>
+            <th>Status</th>
+        </tr>
+    </thead>
+    <tbody>
+        {{- range .Servers.Lookup}}
+        <tr>
+            <td class="mono">{{.URL}}</td>
+            <td>{{template "dash" .Status}}</td>
+        </tr>
+        {{- end}}
+    </tbody>
+</table>
+{{- end}}
+{{template "footer" .}}
+{{end}}

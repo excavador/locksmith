@@ -23,7 +23,6 @@ const (
 
 type CreateRequest struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
-	VaultName     string                 `protobuf:"bytes,1,opt,name=vault_name,json=vaultName,proto3" json:"vault_name,omitempty"`
 	Name          string                 `protobuf:"bytes,2,opt,name=name,proto3" json:"name,omitempty"` // real name for the UID
 	Email         string                 `protobuf:"bytes,3,opt,name=email,proto3" json:"email,omitempty"`
 	Algo          string                 `protobuf:"bytes,4,opt,name=algo,proto3" json:"algo,omitempty"`                               // master key algo, e.g. "rsa4096"
@@ -62,13 +61,6 @@ func (x *CreateRequest) ProtoReflect() protoreflect.Message {
 // Deprecated: Use CreateRequest.ProtoReflect.Descriptor instead.
 func (*CreateRequest) Descriptor() ([]byte, []int) {
 	return file_gpgsmith_v1_key_proto_rawDescGZIP(), []int{0}
-}
-
-func (x *CreateRequest) GetVaultName() string {
-	if x != nil {
-		return x.VaultName
-	}
-	return ""
 }
 
 func (x *CreateRequest) GetName() string {
@@ -167,7 +159,6 @@ func (x *CreateResponse) GetSubkeys() []*SubKey {
 
 type GenerateRequest struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
-	VaultName     string                 `protobuf:"bytes,1,opt,name=vault_name,json=vaultName,proto3" json:"vault_name,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -200,13 +191,6 @@ func (x *GenerateRequest) ProtoReflect() protoreflect.Message {
 // Deprecated: Use GenerateRequest.ProtoReflect.Descriptor instead.
 func (*GenerateRequest) Descriptor() ([]byte, []int) {
 	return file_gpgsmith_v1_key_proto_rawDescGZIP(), []int{2}
-}
-
-func (x *GenerateRequest) GetVaultName() string {
-	if x != nil {
-		return x.VaultName
-	}
-	return ""
 }
 
 type GenerateResponse struct {
@@ -255,7 +239,6 @@ func (x *GenerateResponse) GetSubkeys() []*SubKey {
 
 type ListKeysRequest struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
-	VaultName     string                 `protobuf:"bytes,1,opt,name=vault_name,json=vaultName,proto3" json:"vault_name,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -288,13 +271,6 @@ func (x *ListKeysRequest) ProtoReflect() protoreflect.Message {
 // Deprecated: Use ListKeysRequest.ProtoReflect.Descriptor instead.
 func (*ListKeysRequest) Descriptor() ([]byte, []int) {
 	return file_gpgsmith_v1_key_proto_rawDescGZIP(), []int{4}
-}
-
-func (x *ListKeysRequest) GetVaultName() string {
-	if x != nil {
-		return x.VaultName
-	}
-	return ""
 }
 
 type ListKeysResponse struct {
@@ -343,7 +319,6 @@ func (x *ListKeysResponse) GetKeys() []*SubKey {
 
 type RevokeRequest struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
-	VaultName     string                 `protobuf:"bytes,1,opt,name=vault_name,json=vaultName,proto3" json:"vault_name,omitempty"`
 	KeyId         string                 `protobuf:"bytes,2,opt,name=key_id,json=keyId,proto3" json:"key_id,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
@@ -377,13 +352,6 @@ func (x *RevokeRequest) ProtoReflect() protoreflect.Message {
 // Deprecated: Use RevokeRequest.ProtoReflect.Descriptor instead.
 func (*RevokeRequest) Descriptor() ([]byte, []int) {
 	return file_gpgsmith_v1_key_proto_rawDescGZIP(), []int{6}
-}
-
-func (x *RevokeRequest) GetVaultName() string {
-	if x != nil {
-		return x.VaultName
-	}
-	return ""
 }
 
 func (x *RevokeRequest) GetKeyId() string {
@@ -431,7 +399,6 @@ func (*RevokeResponse) Descriptor() ([]byte, []int) {
 
 type ExportKeyRequest struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
-	VaultName     string                 `protobuf:"bytes,1,opt,name=vault_name,json=vaultName,proto3" json:"vault_name,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -464,13 +431,6 @@ func (x *ExportKeyRequest) ProtoReflect() protoreflect.Message {
 // Deprecated: Use ExportKeyRequest.ProtoReflect.Descriptor instead.
 func (*ExportKeyRequest) Descriptor() ([]byte, []int) {
 	return file_gpgsmith_v1_key_proto_rawDescGZIP(), []int{8}
-}
-
-func (x *ExportKeyRequest) GetVaultName() string {
-	if x != nil {
-		return x.VaultName
-	}
-	return ""
 }
 
 type ExportKeyResponse struct {
@@ -519,7 +479,6 @@ func (x *ExportKeyResponse) GetTarget() string {
 
 type SSHPubKeyRequest struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
-	VaultName     string                 `protobuf:"bytes,1,opt,name=vault_name,json=vaultName,proto3" json:"vault_name,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -552,13 +511,6 @@ func (x *SSHPubKeyRequest) ProtoReflect() protoreflect.Message {
 // Deprecated: Use SSHPubKeyRequest.ProtoReflect.Descriptor instead.
 func (*SSHPubKeyRequest) Descriptor() ([]byte, []int) {
 	return file_gpgsmith_v1_key_proto_rawDescGZIP(), []int{10}
-}
-
-func (x *SSHPubKeyRequest) GetVaultName() string {
-	if x != nil {
-		return x.VaultName
-	}
-	return ""
 }
 
 type SSHPubKeyResponse struct {
@@ -607,7 +559,6 @@ func (x *SSHPubKeyResponse) GetPath() string {
 
 type KeyStatusRequest struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
-	VaultName     string                 `protobuf:"bytes,1,opt,name=vault_name,json=vaultName,proto3" json:"vault_name,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -640,13 +591,6 @@ func (x *KeyStatusRequest) ProtoReflect() protoreflect.Message {
 // Deprecated: Use KeyStatusRequest.ProtoReflect.Descriptor instead.
 func (*KeyStatusRequest) Descriptor() ([]byte, []int) {
 	return file_gpgsmith_v1_key_proto_rawDescGZIP(), []int{12}
-}
-
-func (x *KeyStatusRequest) GetVaultName() string {
-	if x != nil {
-		return x.VaultName
-	}
-	return ""
 }
 
 type KeyStatusResponse struct {
@@ -705,48 +649,41 @@ var File_gpgsmith_v1_key_proto protoreflect.FileDescriptor
 
 const file_gpgsmith_v1_key_proto_rawDesc = "" +
 	"\n" +
-	"\x15gpgsmith/v1/key.proto\x12\vgpgsmith.v1\x1a\x18gpgsmith/v1/common.proto\"\xca\x01\n" +
-	"\rCreateRequest\x12\x1d\n" +
-	"\n" +
-	"vault_name\x18\x01 \x01(\tR\tvaultName\x12\x12\n" +
+	"\x15gpgsmith/v1/key.proto\x12\vgpgsmith.v1\x1a\x18gpgsmith/v1/common.proto\"\xbd\x01\n" +
+	"\rCreateRequest\x12\x12\n" +
 	"\x04name\x18\x02 \x01(\tR\x04name\x12\x14\n" +
 	"\x05email\x18\x03 \x01(\tR\x05email\x12\x12\n" +
 	"\x04algo\x18\x04 \x01(\tR\x04algo\x12\x16\n" +
 	"\x06expiry\x18\x05 \x01(\tR\x06expiry\x12\x1f\n" +
 	"\vsubkey_algo\x18\x06 \x01(\tR\n" +
 	"subkeyAlgo\x12#\n" +
-	"\rsubkey_expiry\x18\a \x01(\tR\fsubkeyExpiry\"\\\n" +
+	"\rsubkey_expiry\x18\a \x01(\tR\fsubkeyExpiryJ\x04\b\x01\x10\x02R\n" +
+	"vault_name\"\\\n" +
 	"\x0eCreateResponse\x12\x1b\n" +
 	"\tmaster_fp\x18\x01 \x01(\tR\bmasterFp\x12-\n" +
-	"\asubkeys\x18\x02 \x03(\v2\x13.gpgsmith.v1.SubKeyR\asubkeys\"0\n" +
-	"\x0fGenerateRequest\x12\x1d\n" +
-	"\n" +
-	"vault_name\x18\x01 \x01(\tR\tvaultName\"A\n" +
+	"\asubkeys\x18\x02 \x03(\v2\x13.gpgsmith.v1.SubKeyR\asubkeys\"#\n" +
+	"\x0fGenerateRequestJ\x04\b\x01\x10\x02R\n" +
+	"vault_name\"A\n" +
 	"\x10GenerateResponse\x12-\n" +
-	"\asubkeys\x18\x01 \x03(\v2\x13.gpgsmith.v1.SubKeyR\asubkeys\"0\n" +
-	"\x0fListKeysRequest\x12\x1d\n" +
-	"\n" +
-	"vault_name\x18\x01 \x01(\tR\tvaultName\";\n" +
+	"\asubkeys\x18\x01 \x03(\v2\x13.gpgsmith.v1.SubKeyR\asubkeys\"#\n" +
+	"\x0fListKeysRequestJ\x04\b\x01\x10\x02R\n" +
+	"vault_name\";\n" +
 	"\x10ListKeysResponse\x12'\n" +
-	"\x04keys\x18\x01 \x03(\v2\x13.gpgsmith.v1.SubKeyR\x04keys\"E\n" +
-	"\rRevokeRequest\x12\x1d\n" +
-	"\n" +
-	"vault_name\x18\x01 \x01(\tR\tvaultName\x12\x15\n" +
-	"\x06key_id\x18\x02 \x01(\tR\x05keyId\"\x10\n" +
-	"\x0eRevokeResponse\"1\n" +
-	"\x10ExportKeyRequest\x12\x1d\n" +
-	"\n" +
-	"vault_name\x18\x01 \x01(\tR\tvaultName\"+\n" +
+	"\x04keys\x18\x01 \x03(\v2\x13.gpgsmith.v1.SubKeyR\x04keys\"8\n" +
+	"\rRevokeRequest\x12\x15\n" +
+	"\x06key_id\x18\x02 \x01(\tR\x05keyIdJ\x04\b\x01\x10\x02R\n" +
+	"vault_name\"\x10\n" +
+	"\x0eRevokeResponse\"$\n" +
+	"\x10ExportKeyRequestJ\x04\b\x01\x10\x02R\n" +
+	"vault_name\"+\n" +
 	"\x11ExportKeyResponse\x12\x16\n" +
-	"\x06target\x18\x01 \x01(\tR\x06target\"1\n" +
-	"\x10SSHPubKeyRequest\x12\x1d\n" +
-	"\n" +
-	"vault_name\x18\x01 \x01(\tR\tvaultName\"'\n" +
+	"\x06target\x18\x01 \x01(\tR\x06target\"$\n" +
+	"\x10SSHPubKeyRequestJ\x04\b\x01\x10\x02R\n" +
+	"vault_name\"'\n" +
 	"\x11SSHPubKeyResponse\x12\x12\n" +
-	"\x04path\x18\x01 \x01(\tR\x04path\"1\n" +
-	"\x10KeyStatusRequest\x12\x1d\n" +
-	"\n" +
-	"vault_name\x18\x01 \x01(\tR\tvaultName\"g\n" +
+	"\x04path\x18\x01 \x01(\tR\x04path\"$\n" +
+	"\x10KeyStatusRequestJ\x04\b\x01\x10\x02R\n" +
+	"vault_name\"g\n" +
 	"\x11KeyStatusResponse\x12'\n" +
 	"\x04keys\x18\x01 \x03(\v2\x13.gpgsmith.v1.SubKeyR\x04keys\x12)\n" +
 	"\x04card\x18\x02 \x01(\v2\x15.gpgsmith.v1.CardInfoR\x04card2\xfe\x03\n" +

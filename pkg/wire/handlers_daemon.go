@@ -49,7 +49,16 @@ func (h *daemonHandler) ListSessions(ctx context.Context, _ *connect.Request[v1.
 	if err != nil {
 		return nil, connectErr(err)
 	}
-	return connect.NewResponse(&v1.ListSessionsResponse{
+	resp := connect.NewResponse(&v1.ListSessionsResponse{
 		Sessions: toProtoSessionInfos(sessions),
-	}), nil
+	})
+	// Stamp the opaque token map onto a response header so local CLI
+	// callers can auto-bind GPGSMITH_SESSION when exactly one session
+	// is open. We deliberately do NOT surface tokens via the SessionInfo
+	// proto: keeping them in a side-channel header means non-local
+	// callers (web UI shim, tests) never see them unless they opt in.
+	if tokens, tokErr := h.backend.ListSessionTokens(ctx); tokErr == nil {
+		resp.Header().Set(SessionTokenListHeader, encodeSessionTokens(tokens))
+	}
+	return resp, nil
 }

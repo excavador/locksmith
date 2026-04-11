@@ -10,8 +10,10 @@ service AuditService {
   rpc Show(ShowRequest) returns (ShowResponse);
 }
 
+// Session is identified by the Gpgsmith-Session header. Field 1 is reserved.
 message ShowRequest {
-  string vault_name = 1;
+  reserved 1;
+  reserved "vault_name";
   int32 last = 2; // optional limit; 0 = all
 }
 

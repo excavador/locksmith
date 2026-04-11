@@ -2,6 +2,155 @@
 
 ## Unreleased
 
+## v0.5.0 - 2026-04-11
+
+This release introduces **token-keyed sessions** and a **loopback-only web
+UI**. The daemon's session map is now keyed by an opaque per-session token
+instead of by vault name; multiple terminals can each open the same vault
+and get fully independent sessions with their own decrypted GNUPGHOME, gpg
+agent, and idle timer. Each terminal binds to its session via a
+`GPGSMITH_SESSION` environment variable, set automatically by `gpgsmith
+vault open` when it spawns a child `$SHELL`. The new `gpgsmith webui`
+command exposes the same session model to a browser tab via an HttpOnly
+cookie.
+
+### Breaking
+
+- **`gpgsmith vault open` now spawns a subshell by default.** Previous
+  behavior (return to the parent shell after sealing the daemon-side
+  state) is gone. Use `--no-shell` to get the old return-immediately
+  ergonomic with an `export GPGSMITH_SESSION=...` line on stdout for
+  `eval $(...)`.
+- **`gpgsmith vault seal` and `gpgsmith vault discard` no longer take
+  a vault name argument.** They target the session bound by
+  `GPGSMITH_SESSION` (or, if exactly one session is open, auto-bind to
+  it).
+- **The global `--vault` flag is removed.** Sessions are selected by
+  the `Gpgsmith-Session` HTTP header, which the CLI sets from the
+  `GPGSMITH_SESSION` env var. The `--vault-dir` flag (registry override
+  for tests) is unchanged.
+- **Wire schema:** every session-bearing Request message dropped its
+  `string vault_name = 1` field; field 1 is now `reserved`. Affected
+  services: KeyService, IdentityService, CardService, ServerService,
+  AuditService, EventService, plus VaultService.SealRequest /
+  DiscardRequest. Non-session vault ops (Open, Resume, Create, Import,
+  Export, Trust, Snapshots) still take a vault name in the request body.
+- **`OpenResponse`, `ResumeResponse`, and `CreateVaultResponse`** now
+  return a `string token` field — the daemon's session token to be sent
+  back via the `Gpgsmith-Session` header on subsequent calls.
+
+### Added
+
+#### New CLI commands and behavior
+
+- **`gpgsmith webui [--bind 127.0.0.1:0] [--open|--no-open]`** — start a
+  loopback-only HTTP server that talks to the daemon and serves the
+  read-only web UI. Refuses any non-loopback bind address. Prints a
+  one-shot URL `http://127.0.0.1:<port>/?t=<startup-token>` on stderr
+  and (with `--open`, default true) launches the default browser.
+- **`gpgsmith vault open <name>`** spawns a child `$SHELL` (bash, zsh
+  detected from `$SHELL`, fish falls back to sh) with `GPGSMITH_SESSION`
+  and `GPGSMITH_VAULT_NAME` set in its environment. The subshell's
+  prompt is prefixed `[gpgsmith:<vault>]` via a generated rc file.
+  Exiting the subshell returns to the parent shell with the subshell's
+  exit code; the daemon retains the session until its idle timer fires.
+- **`gpgsmith vault open --no-shell <name>`** — scripted form. Prints
+  `export GPGSMITH_SESSION=<token>` and `export GPGSMITH_VAULT_NAME=<name>`
+  to stdout for `eval $(...)`. Human-readable status goes to stderr.
+- **CLI auto-bind fallback.** When `GPGSMITH_SESSION` is unset and the
+  daemon has exactly one open session, the CLI auto-binds to it (the
+  daemon's `Daemon.ListSessions` reply ships an out-of-band
+  `Gpgsmith-Session-Tokens` HTTP response header that the CLI consumes;
+  the header is Unix-socket-only by convention and never sent over a
+  network listener).
+
+#### New packages
+
+- **`pkg/webui/gpgsmith`** — loopback-only HTTP frontend. Stack:
+  `net/http` with Go 1.22+ method-aware mux, `html/template` for views,
+  vendored HTMX (47 KB) for client interactivity, hand-written CSS with
+  `prefers-color-scheme` dark mode, all assets embedded via `go:embed`,
+  zero JavaScript toolchain. Auth: per-startup random token in URL is
+  exchanged for an HttpOnly + SameSite=Strict cookie scoped to the
+  loopback host; per-tab cookie tokens map to in-memory `tabState`
+  records that hold the daemon session token. Pages: vault dashboard
+  (open / discard), keys, identities, cards, servers, audit log
+  (read-only). The web UI server holds a narrow `DaemonClient` interface
+  in front of `wire.Client`, with a wire adapter that stamps each tab's
+  daemon session token via `wire.ContextWithSessionToken`.
+
+#### New wire layer primitives
+
+- **`pkg/wire/session_header.go`** — Connect interceptors that read the
+  `Gpgsmith-Session` header from the request context (server) or stamp
+  it from `GPGSMITH_SESSION` env (client). Includes
+  `ContextWithSessionToken(ctx, token)` for explicit per-request token
+  binding (used by the web UI to bind each browser tab independently).
+- **`Backend.ListSessionTokens`** plus the `Gpgsmith-Session-Tokens`
+  response header on `Daemon.ListSessions` — a side-channel that lets
+  same-host CLI clients enumerate the daemon's open sessions and their
+  tokens for the auto-bind fallback. Tokens are never carried in any
+  proto message body.
+
+### Fixed
+
+- **Multiple sessions per vault.** The v0.4.0 daemon refused a second
+  `vault open` for the same vault name. v0.5.0 lifts that restriction:
+  two opens produce two independent sessions with distinct tokens,
+  workdirs, gpg-agents, and idle timers. Mutations in one are not
+  visible in the other until each is sealed.
+
+### Removed
+
+- **Global `--vault` flag.** Session targeting now goes through
+  `GPGSMITH_SESSION` (env var or header).
+- **`vault_name` field on every session-bearing proto Request.** Replaced
+  by the `Gpgsmith-Session` header. Field 1 reserved on every affected
+  message; field numbering on the rest is unchanged.
+
+### Changed (internal architecture)
+
+- **`pkg/daemon` session map** is now `map[token]*sessionEntry` instead
+  of `map[vaultName]*sessionEntry`. Per-session bookkeeping (idle timer,
+  gpg-agent kill on cleanup) is unchanged. Token generation: 32 random
+  bytes from `crypto/rand` → 64 hex chars.
+- **`Backend` interface (`pkg/wire/backend.go`)** — every session-bearing
+  method's vault-name parameter became a token. Methods that mint a
+  session (`OpenVault`, `ResumeVault`, `CreateVault`) return the token
+  alongside their existing return values.
+- **`pkg/cli/gpgsmith/subshell.go`** restored from the v0.3.0-era
+  shell-wrapper machinery. The bash/zsh rc file approach is the same;
+  the env var name changed from `GPGSMITH_VAULT_KEY` (passphrase) to
+  `GPGSMITH_SESSION` (opaque token). The passphrase **never leaves the
+  daemon process** in v0.5.0 — the env var is just a session selector,
+  so leaking it is far less dangerous than the v0.3.0 model.
+
+### Migration
+
+- Replace `gpgsmith vault open work && gpgsmith keys list && gpgsmith
+  vault seal` flows with the new subshell flow:
+  ```
+  gpgsmith vault open work        # spawns [gpgsmith:work] $ subshell
+  gpgsmith keys list              # inside the subshell
+  gpgsmith vault seal -m "..."    # inside the subshell
+  exit                            # back to parent shell
+  ```
+  Or use `--no-shell` for scripts:
+  ```
+  eval "$(gpgsmith vault open --no-shell work)"
+  gpgsmith keys list
+  gpgsmith vault seal -m "..."
+  unset GPGSMITH_SESSION
+  ```
+- Drop any `--vault <name>` flag usages from your shell history. The
+  flag is gone.
+- If you have a tool that calls the daemon's RPC API directly (Connect
+  client), you must now stamp the `Gpgsmith-Session` header on every
+  session-bearing request. Use the env-var interceptor in
+  `pkg/wire/client.go` for the simple case, or
+  `wire.ContextWithSessionToken(ctx, token)` for explicit per-request
+  binding.
+
 ## v0.4.0 - 2026-04-08
 
 This release replaces gpgsmith's single-process CLI architecture with a

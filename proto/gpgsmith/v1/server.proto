@@ -33,8 +33,12 @@ service ServerService {
   rpc Lookup(LookupRequest) returns (LookupResponse);
 }
 
+// All session-bearing requests target the session identified by the
+// Gpgsmith-Session header. Field 1 is reserved (formerly vault_name).
+
 message ListServersRequest {
-  string vault_name = 1;
+  reserved 1;
+  reserved "vault_name";
 }
 
 message ListServersResponse {
@@ -42,7 +46,8 @@ message ListServersResponse {
 }
 
 message AddServerRequest {
-  string vault_name = 1;
+  reserved 1;
+  reserved "vault_name";
   string alias = 2;
   string url = 3;
 }
@@ -50,28 +55,32 @@ message AddServerRequest {
 message AddServerResponse {}
 
 message RemoveServerRequest {
-  string vault_name = 1;
+  reserved 1;
+  reserved "vault_name";
   string alias = 2;
 }
 
 message RemoveServerResponse {}
 
 message EnableServerRequest {
-  string vault_name = 1;
+  reserved 1;
+  reserved "vault_name";
   string alias = 2;
 }
 
 message EnableServerResponse {}
 
 message DisableServerRequest {
-  string vault_name = 1;
+  reserved 1;
+  reserved "vault_name";
   string alias = 2;
 }
 
 message DisableServerResponse {}
 
 message PublishRequest {
-  string vault_name = 1;
+  reserved 1;
+  reserved "vault_name";
   repeated string aliases = 2; // empty = all enabled
 }
 
@@ -86,7 +95,8 @@ message PublishResult {
 }
 
 message LookupRequest {
-  string vault_name = 1;
+  reserved 1;
+  reserved "vault_name";
 }
 
 message LookupResponse {

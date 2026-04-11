@@ -49,10 +49,6 @@ func Main(version, commit, date string) int {
 				Name:  "vault-dir",
 				Usage: "override vault directory (ignores the registry; useful for tests)",
 			},
-			&cli.StringFlag{
-				Name:  "vault",
-				Usage: "select a vault by name from the registry (default: the configured default)",
-			},
 		},
 		Before: func(ctx context.Context, _ *cli.Command) (context.Context, error) {
 			level := slog.LevelInfo
@@ -72,6 +68,7 @@ func Main(version, commit, date string) int {
 			serverCmd(),
 			auditCmd(),
 			daemonCmd(version, commit, date),
+			webuiCmd(),
 			{
 				Name:  "version",
 				Usage: "show version information",

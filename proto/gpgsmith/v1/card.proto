@@ -28,8 +28,12 @@ service CardService {
   rpc Discover(DiscoverRequest) returns (DiscoverResponse);
 }
 
+// All session-bearing requests target the session identified by the
+// Gpgsmith-Session header. Field 1 is reserved (formerly vault_name).
+
 message ProvisionRequest {
-  string vault_name = 1;
+  reserved 1;
+  reserved "vault_name";
   string label = 2;
   string description = 3;
   bool same_keys = 4;
@@ -42,7 +46,8 @@ message ProvisionResponse {
 }
 
 message RotateRequest {
-  string vault_name = 1;
+  reserved 1;
+  reserved "vault_name";
   string label = 2;
 }
 
@@ -51,14 +56,16 @@ message RotateResponse {
 }
 
 message RevokeCardRequest {
-  string vault_name = 1;
+  reserved 1;
+  reserved "vault_name";
   string label = 2;
 }
 
 message RevokeCardResponse {}
 
 message InventoryRequest {
-  string vault_name = 1;
+  reserved 1;
+  reserved "vault_name";
 }
 
 message InventoryResponse {
@@ -66,7 +73,8 @@ message InventoryResponse {
 }
 
 message DiscoverRequest {
-  string vault_name = 1;
+  reserved 1;
+  reserved "vault_name";
   string label = 2;
   string description = 3;
 }
