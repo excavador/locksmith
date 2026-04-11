@@ -168,6 +168,7 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("GET /vault/{name}/identities", s.handleIdentities)
 	s.mux.HandleFunc("GET /vault/{name}/cards", s.handleCards)
 	s.mux.HandleFunc("GET /vault/{name}/servers", s.handleServers)
+	s.mux.HandleFunc("GET /vault/{name}/servers/lookup", s.handleServersLookupFragment)
 	s.mux.HandleFunc("GET /vault/{name}/audit", s.handleAudit)
 }
 
@@ -602,14 +603,13 @@ func (s *Server) handleServers(w http.ResponseWriter, r *http.Request) {
 		s.render(w, r, "servers", view)
 		return
 	}
-	lookupResp, err := s.client.ServerLookup(r.Context(), tab.daemonToken)
-	if err != nil {
-		// Lookup is optional — surface as warning, not fatal.
-		s.logger.WarnContext(r.Context(), "webui: server lookup",
-			slog.String("error", err.Error()),
-		)
-	}
 
+	// The lookup is DELIBERATELY not called here — it fans out to
+	// every enabled keyserver and takes seconds to tens of seconds
+	// depending on network conditions. The page renders instantly
+	// with just the static server list, and the HTMX placeholder at
+	// the bottom of servers.html fetches the lookup fragment from
+	// /vault/<name>/servers/lookup asynchronously.
 	sv := &serversView{}
 	for _, srv := range listResp.GetServers() {
 		sv.Servers = append(sv.Servers, serverRow{
@@ -619,16 +619,49 @@ func (s *Server) handleServers(w http.ResponseWriter, r *http.Request) {
 			Enabled: srv.GetEnabled(),
 		})
 	}
-	if lookupResp != nil {
-		for _, lr := range lookupResp.GetResults() {
+	view.Servers = sv
+	s.render(w, r, "servers", view)
+}
+
+// handleServersLookupFragment renders just the lookup-results table as
+// a bare HTML fragment (no layout). Called by HTMX from servers.html
+// after the full page has rendered, so the user sees their server list
+// immediately instead of waiting for the per-keyserver network calls.
+func (s *Server) handleServersLookupFragment(w http.ResponseWriter, r *http.Request) {
+	tab := s.requireBoundTab(w, r)
+	if tab == nil {
+		return
+	}
+
+	sv := &serversView{}
+	lookupErr := ""
+	resp, err := s.client.ServerLookup(r.Context(), tab.daemonToken)
+	if err != nil {
+		s.logger.WarnContext(r.Context(), "webui: server lookup",
+			slog.String("error", err.Error()),
+		)
+		lookupErr = err.Error()
+	}
+	if resp != nil {
+		for _, lr := range resp.GetResults() {
 			sv.Lookup = append(sv.Lookup, lookupRow{
 				URL:    lr.GetUrl(),
 				Status: lr.GetStatus(),
 			})
 		}
 	}
-	view.Servers = sv
-	s.render(w, r, "servers", view)
+
+	view := &baseView{Servers: sv, Error: lookupErr}
+	var buf bytes.Buffer
+	if err := s.templates.ExecuteTemplate(&buf, "servers_lookup_fragment", view); err != nil {
+		s.logger.ErrorContext(r.Context(), "webui: render lookup fragment",
+			slog.String("error", err.Error()),
+		)
+		http.Error(w, "internal render error", http.StatusInternalServerError)
+		return
+	}
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	_, _ = w.Write(buf.Bytes())
 }
 
 func (s *Server) handleAudit(w http.ResponseWriter, r *http.Request) {

@@ -27,8 +27,21 @@
 {{- end}}
 
 <h2>Lookup results</h2>
+<div id="servers-lookup"
+     hx-get="/vault/{{.VaultName}}/servers/lookup"
+     hx-trigger="load"
+     hx-swap="innerHTML">
+    <p class="muted">Querying enabled keyservers for your public key — this may take several seconds…</p>
+</div>
+{{template "footer" .}}
+{{end}}
+
+{{define "servers_lookup_fragment"}}
+{{- if .Error}}
+<p class="alert">Lookup failed: {{.Error}}</p>
+{{- end}}
 {{- if not .Servers.Lookup}}
-<p class="empty">No lookup results cached. Publish the master key with <code>gpgsmith server publish</code> first.</p>
+<p class="empty">No lookup results. Publish the master key with <code>gpgsmith server publish</code> first, or no servers are enabled.</p>
 {{- else}}
 <table>
     <thead>
@@ -47,5 +60,4 @@
     </tbody>
 </table>
 {{- end}}
-{{template "footer" .}}
 {{end}}

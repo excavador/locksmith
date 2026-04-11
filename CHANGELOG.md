@@ -2,6 +2,32 @@
 
 ## Unreleased
 
+## v0.5.4 - 2026-04-11
+
+### Fixed
+
+- **Web UI `/servers` page hung for ~16 seconds on load.** The
+  handler called `ServerService.Lookup` synchronously, which fans
+  out to every enabled keyserver (`keys.openpgp.org`,
+  `keyserver.ubuntu.com`, etc.) and waits for each HTTP round-trip
+  before rendering the page. With several enabled keyservers the
+  total wall time easily exceeds 15 seconds, during which the tab
+  appears frozen.
+
+  Fix: the servers page now renders instantly with just the static
+  server list from `ServerService.List`, and the lookup results are
+  loaded asynchronously via an HTMX `hx-get` + `hx-trigger="load"`
+  placeholder that hits a new fragment endpoint
+  `GET /vault/<name>/servers/lookup`. The fragment returns only the
+  lookup table HTML (no layout) and HTMX swaps it into the page
+  when it arrives. The user sees their configured servers
+  immediately; the "currently available on keyservers" status
+  appears a moment later.
+
+  This was the first on-page use of HTMX in the web UI — the
+  library has been vendored since v0.5.0 but no page needed it
+  until now.
+
 ## v0.5.3 - 2026-04-11
 
 ### Fixed
