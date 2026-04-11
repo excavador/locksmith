@@ -27,6 +27,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"log/slog"
 	"os"
 	"path/filepath"
@@ -747,11 +748,158 @@ func (d *Daemon) ImportVault(ctx context.Context, sourcePath, passphrase, target
 	return snap, nil
 }
 
-// ExportVault implements wire.Backend. Currently a stub: copies the
-// latest canonical to targetDir is left for a future commit, since the
-// daemon does not yet need it for any frontend.
-func (d *Daemon) ExportVault(_ context.Context, _, _, _ string) (string, error) {
-	return "", errors.New("export vault: not implemented in this build")
+// CreateVault implements wire.Backend. Initializes a brand-new vault
+// registry entry, writes an empty snapshot to disk, opens it, and
+// registers a session for follow-up key generation via KeyService.Create.
+func (d *Daemon) CreateVault(ctx context.Context, name, path, passphrase string) (vault.Snapshot, wire.SessionInfo, error) {
+	if d.shuttingDown.Load() {
+		return vault.Snapshot{}, wire.SessionInfo{}, ErrShuttingDown
+	}
+	if name == "" {
+		return vault.Snapshot{}, wire.SessionInfo{}, fmt.Errorf("create vault: name is required")
+	}
+	if path == "" {
+		return vault.Snapshot{}, wire.SessionInfo{}, fmt.Errorf("create vault: path is required")
+	}
+	if passphrase == "" {
+		return vault.Snapshot{}, wire.SessionInfo{}, fmt.Errorf("create vault: passphrase is required")
+	}
+
+	cfg, err := d.loadConfig()
+	if err != nil {
+		// Fresh install: start from empty config.
+		cfg = &vault.Config{}
+	}
+
+	// Detect existing entry by name — fail to avoid clobbering.
+	for i := range cfg.Vaults {
+		if cfg.Vaults[i].Name == name {
+			return vault.Snapshot{}, wire.SessionInfo{}, fmt.Errorf("create vault: %q already exists in registry", name)
+		}
+	}
+
+	entry := vault.Entry{Name: name, Path: path}
+	if addErr := cfg.AddVault(entry); addErr != nil {
+		return vault.Snapshot{}, wire.SessionInfo{}, fmt.Errorf("create vault: %w", addErr)
+	}
+	if err := d.saveConfig(cfg); err != nil {
+		return vault.Snapshot{}, wire.SessionInfo{}, err
+	}
+
+	v, err := vault.NewWithPassphrase(entry.ToConfig(), passphrase, d.logger)
+	if err != nil {
+		return vault.Snapshot{}, wire.SessionInfo{}, fmt.Errorf("create vault: %w", err)
+	}
+	if err := v.Create(ctx); err != nil {
+		return vault.Snapshot{}, wire.SessionInfo{}, fmt.Errorf("create vault: %w", err)
+	}
+
+	// Build an empty workdir and seal it as the first canonical so that
+	// OpenSession has something to decrypt.
+	emptyDir, err := vault.SecureTmpDir()
+	if err != nil {
+		return vault.Snapshot{}, wire.SessionInfo{}, fmt.Errorf("create vault: empty workdir: %w", err)
+	}
+	defer func() { _ = os.RemoveAll(emptyDir) }()
+
+	snap, err := v.Import(ctx, emptyDir)
+	if err != nil {
+		return vault.Snapshot{}, wire.SessionInfo{}, fmt.Errorf("create vault: initial seal: %w", err)
+	}
+
+	// Now open it as a proper session.
+	res, err := gpgsmith.OpenSession(ctx, v, &entry, gpgsmith.SessionOpts{
+		Source: gpgsmith.LockSourceCLI,
+		Logger: d.logger,
+	})
+	if err != nil {
+		return vault.Snapshot{}, wire.SessionInfo{}, fmt.Errorf("create vault: open session: %w", err)
+	}
+
+	se := d.registerSession(&entry, res.Session)
+	d.publishEvent(entry.Name, wire.EventKindStateChanged, "vault created")
+
+	info := d.sessionInfoLocked(entry.Name, se)
+	return snap, info, nil
+}
+
+// ExportVault implements wire.Backend. Decrypts the latest canonical of
+// the named vault and copies its contents into targetDir. This is an
+// offline, one-shot operation: no session is created, no daemon-side
+// state is touched.
+func (d *Daemon) ExportVault(ctx context.Context, name, passphrase, targetDir string) (string, error) {
+	if name == "" {
+		return "", fmt.Errorf("export vault: name is required")
+	}
+	if targetDir == "" {
+		return "", fmt.Errorf("export vault: target dir is required")
+	}
+	if passphrase == "" {
+		return "", fmt.Errorf("export vault: passphrase is required")
+	}
+
+	cfg, err := d.loadConfig()
+	if err != nil {
+		return "", err
+	}
+	entry, err := cfg.Resolve(name)
+	if err != nil {
+		return "", fmt.Errorf("export vault: %w", err)
+	}
+
+	v, err := vault.NewWithPassphrase(entry.ToConfig(), passphrase, d.logger)
+	if err != nil {
+		return "", fmt.Errorf("export vault: %w", err)
+	}
+
+	workdir, snap, err := v.Open(ctx)
+	if err != nil {
+		return "", fmt.Errorf("export vault: %w", err)
+	}
+	defer func() { _ = v.Discard(ctx, workdir) }()
+
+	if err := os.MkdirAll(targetDir, 0o700); err != nil {
+		return "", fmt.Errorf("export vault: create target dir: %w", err)
+	}
+
+	if err := copyTree(workdir, targetDir); err != nil {
+		return "", fmt.Errorf("export vault: copy: %w", err)
+	}
+
+	return filepath.Base(snap.Path), nil
+}
+
+// copyTree recursively copies every file and subdirectory from src into
+// dst. Used by ExportVault to move the decrypted workdir into the
+// user-supplied target directory.
+func copyTree(src, dst string) error {
+	return filepath.WalkDir(src, func(path string, de os.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		rel, relErr := filepath.Rel(src, path)
+		if relErr != nil {
+			return relErr
+		}
+		target := filepath.Join(dst, rel)
+		if de.IsDir() {
+			return os.MkdirAll(target, 0o700)
+		}
+		in, openErr := os.Open(path) //nolint:gosec // path is our freshly-decrypted workdir
+		if openErr != nil {
+			return openErr
+		}
+		defer func() { _ = in.Close() }()
+		out, createErr := os.OpenFile(target, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o600) //nolint:gosec // target dir supplied by caller
+		if createErr != nil {
+			return createErr
+		}
+		if _, copyErr := io.Copy(out, in); copyErr != nil {
+			_ = out.Close()
+			return copyErr
+		}
+		return out.Close()
+	})
 }
 
 // TrustVault implements wire.Backend.

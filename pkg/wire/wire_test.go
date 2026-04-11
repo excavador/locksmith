@@ -73,6 +73,9 @@ func (f *fakeBackend) Snapshots(context.Context, string) ([]vault.Snapshot, erro
 func (f *fakeBackend) ImportVault(context.Context, string, string, string) (vault.Snapshot, error) {
 	return vault.Snapshot{}, errUnimplemented
 }
+func (f *fakeBackend) CreateVault(context.Context, string, string, string) (vault.Snapshot, SessionInfo, error) {
+	return vault.Snapshot{}, SessionInfo{}, errUnimplemented
+}
 func (f *fakeBackend) ExportVault(context.Context, string, string, string) (string, error) {
 	return "", errUnimplemented
 }

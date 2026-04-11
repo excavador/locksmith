@@ -17,8 +17,7 @@ import (
 // Translations:
 //
 //	gpgsmith.MasterKeyMismatchError → CodeFailedPrecondition
-//	gpgsmith.LockContentionError    → CodeAlreadyExists
-//	context-canceled               → CodeCanceled
+//	context-canceled                → CodeCanceled
 //	everything else                 → CodeInternal
 func connectErr(err error) error {
 	if err == nil {
@@ -27,9 +26,6 @@ func connectErr(err error) error {
 
 	if gpgsmith.IsMasterKeyMismatch(err) {
 		return connect.NewError(connect.CodeFailedPrecondition, err)
-	}
-	if gpgsmith.IsLockContention(err) {
-		return connect.NewError(connect.CodeAlreadyExists, err)
 	}
 	if errors.Is(err, context.Canceled) {
 		return connect.NewError(connect.CodeCanceled, err)

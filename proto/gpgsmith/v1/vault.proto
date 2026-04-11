@@ -37,6 +37,13 @@ service VaultService {
   // the vault to be open.
   rpc Snapshots(SnapshotsRequest) returns (SnapshotsResponse);
 
+  // Create initializes a brand-new vault registry entry and writes an
+  // empty vault directory encrypted with the supplied passphrase. This is
+  // the first step of `gpgsmith setup` and of `gpgsmith vault create`;
+  // key generation happens in a subsequent KeyService.Create call against
+  // the newly-opened session.
+  rpc Create(CreateVaultRequest) returns (CreateVaultResponse);
+
   // Import takes an existing GNUPGHOME directory on disk and seals it as
   // the first snapshot of a new vault.
   rpc Import(ImportRequest) returns (ImportResponse);
@@ -125,6 +132,17 @@ message SnapshotsRequest {
 
 message SnapshotsResponse {
   repeated Snapshot snapshots = 1;
+}
+
+message CreateVaultRequest {
+  string name = 1;
+  string path = 2;         // absolute directory to create and initialize
+  string passphrase = 3;
+}
+
+message CreateVaultResponse {
+  Snapshot snapshot = 1;   // the initial empty snapshot
+  SessionInfo session = 2; // the newly-opened session on the new vault
 }
 
 message ImportRequest {

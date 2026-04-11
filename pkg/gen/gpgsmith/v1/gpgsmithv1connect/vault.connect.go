@@ -47,6 +47,8 @@ const (
 	VaultServiceDiscardProcedure = "/gpgsmith.v1.VaultService/Discard"
 	// VaultServiceSnapshotsProcedure is the fully-qualified name of the VaultService's Snapshots RPC.
 	VaultServiceSnapshotsProcedure = "/gpgsmith.v1.VaultService/Snapshots"
+	// VaultServiceCreateProcedure is the fully-qualified name of the VaultService's Create RPC.
+	VaultServiceCreateProcedure = "/gpgsmith.v1.VaultService/Create"
 	// VaultServiceImportProcedure is the fully-qualified name of the VaultService's Import RPC.
 	VaultServiceImportProcedure = "/gpgsmith.v1.VaultService/Import"
 	// VaultServiceExportProcedure is the fully-qualified name of the VaultService's Export RPC.
@@ -79,6 +81,12 @@ type VaultServiceClient interface {
 	// Snapshots lists the canonical snapshots of a vault. Does NOT require
 	// the vault to be open.
 	Snapshots(context.Context, *connect.Request[v1.SnapshotsRequest]) (*connect.Response[v1.SnapshotsResponse], error)
+	// Create initializes a brand-new vault registry entry and writes an
+	// empty vault directory encrypted with the supplied passphrase. This is
+	// the first step of `gpgsmith setup` and of `gpgsmith vault create`;
+	// key generation happens in a subsequent KeyService.Create call against
+	// the newly-opened session.
+	Create(context.Context, *connect.Request[v1.CreateVaultRequest]) (*connect.Response[v1.CreateVaultResponse], error)
 	// Import takes an existing GNUPGHOME directory on disk and seals it as
 	// the first snapshot of a new vault.
 	Import(context.Context, *connect.Request[v1.ImportRequest]) (*connect.Response[v1.ImportResponse], error)
@@ -146,6 +154,12 @@ func NewVaultServiceClient(httpClient connect.HTTPClient, baseURL string, opts .
 			connect.WithSchema(vaultServiceMethods.ByName("Snapshots")),
 			connect.WithClientOptions(opts...),
 		),
+		create: connect.NewClient[v1.CreateVaultRequest, v1.CreateVaultResponse](
+			httpClient,
+			baseURL+VaultServiceCreateProcedure,
+			connect.WithSchema(vaultServiceMethods.ByName("Create")),
+			connect.WithClientOptions(opts...),
+		),
 		_import: connect.NewClient[v1.ImportRequest, v1.ImportResponse](
 			httpClient,
 			baseURL+VaultServiceImportProcedure,
@@ -176,6 +190,7 @@ type vaultServiceClient struct {
 	seal      *connect.Client[v1.SealRequest, v1.SealResponse]
 	discard   *connect.Client[v1.DiscardRequest, v1.DiscardResponse]
 	snapshots *connect.Client[v1.SnapshotsRequest, v1.SnapshotsResponse]
+	create    *connect.Client[v1.CreateVaultRequest, v1.CreateVaultResponse]
 	_import   *connect.Client[v1.ImportRequest, v1.ImportResponse]
 	export    *connect.Client[v1.ExportRequest, v1.ExportResponse]
 	trust     *connect.Client[v1.TrustRequest, v1.TrustResponse]
@@ -214,6 +229,11 @@ func (c *vaultServiceClient) Discard(ctx context.Context, req *connect.Request[v
 // Snapshots calls gpgsmith.v1.VaultService.Snapshots.
 func (c *vaultServiceClient) Snapshots(ctx context.Context, req *connect.Request[v1.SnapshotsRequest]) (*connect.Response[v1.SnapshotsResponse], error) {
 	return c.snapshots.CallUnary(ctx, req)
+}
+
+// Create calls gpgsmith.v1.VaultService.Create.
+func (c *vaultServiceClient) Create(ctx context.Context, req *connect.Request[v1.CreateVaultRequest]) (*connect.Response[v1.CreateVaultResponse], error) {
+	return c.create.CallUnary(ctx, req)
 }
 
 // Import calls gpgsmith.v1.VaultService.Import.
@@ -255,6 +275,12 @@ type VaultServiceHandler interface {
 	// Snapshots lists the canonical snapshots of a vault. Does NOT require
 	// the vault to be open.
 	Snapshots(context.Context, *connect.Request[v1.SnapshotsRequest]) (*connect.Response[v1.SnapshotsResponse], error)
+	// Create initializes a brand-new vault registry entry and writes an
+	// empty vault directory encrypted with the supplied passphrase. This is
+	// the first step of `gpgsmith setup` and of `gpgsmith vault create`;
+	// key generation happens in a subsequent KeyService.Create call against
+	// the newly-opened session.
+	Create(context.Context, *connect.Request[v1.CreateVaultRequest]) (*connect.Response[v1.CreateVaultResponse], error)
 	// Import takes an existing GNUPGHOME directory on disk and seals it as
 	// the first snapshot of a new vault.
 	Import(context.Context, *connect.Request[v1.ImportRequest]) (*connect.Response[v1.ImportResponse], error)
@@ -318,6 +344,12 @@ func NewVaultServiceHandler(svc VaultServiceHandler, opts ...connect.HandlerOpti
 		connect.WithSchema(vaultServiceMethods.ByName("Snapshots")),
 		connect.WithHandlerOptions(opts...),
 	)
+	vaultServiceCreateHandler := connect.NewUnaryHandler(
+		VaultServiceCreateProcedure,
+		svc.Create,
+		connect.WithSchema(vaultServiceMethods.ByName("Create")),
+		connect.WithHandlerOptions(opts...),
+	)
 	vaultServiceImportHandler := connect.NewUnaryHandler(
 		VaultServiceImportProcedure,
 		svc.Import,
@@ -352,6 +384,8 @@ func NewVaultServiceHandler(svc VaultServiceHandler, opts ...connect.HandlerOpti
 			vaultServiceDiscardHandler.ServeHTTP(w, r)
 		case VaultServiceSnapshotsProcedure:
 			vaultServiceSnapshotsHandler.ServeHTTP(w, r)
+		case VaultServiceCreateProcedure:
+			vaultServiceCreateHandler.ServeHTTP(w, r)
 		case VaultServiceImportProcedure:
 			vaultServiceImportHandler.ServeHTTP(w, r)
 		case VaultServiceExportProcedure:
@@ -393,6 +427,10 @@ func (UnimplementedVaultServiceHandler) Discard(context.Context, *connect.Reques
 
 func (UnimplementedVaultServiceHandler) Snapshots(context.Context, *connect.Request[v1.SnapshotsRequest]) (*connect.Response[v1.SnapshotsResponse], error) {
 	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("gpgsmith.v1.VaultService.Snapshots is not implemented"))
+}
+
+func (UnimplementedVaultServiceHandler) Create(context.Context, *connect.Request[v1.CreateVaultRequest]) (*connect.Response[v1.CreateVaultResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("gpgsmith.v1.VaultService.Create is not implemented"))
 }
 
 func (UnimplementedVaultServiceHandler) Import(context.Context, *connect.Request[v1.ImportRequest]) (*connect.Response[v1.ImportResponse], error) {

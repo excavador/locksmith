@@ -3,21 +3,19 @@ package gpgsmith
 import (
 	"context"
 	"fmt"
-	"log/slog"
 	"os"
 	"text/tabwriter"
-	"time"
 
+	"connectrpc.com/connect"
 	"github.com/urfave/cli/v3"
 
-	"github.com/excavador/locksmith/pkg/audit"
-	"github.com/excavador/locksmith/pkg/gpg"
+	v1 "github.com/excavador/locksmith/pkg/gen/gpgsmith/v1"
 )
 
 func cardCmd() *cli.Command {
 	return &cli.Command{
 		Name:  "card",
-		Usage: "high-level YubiKey workflows (requires GNUPGHOME set via vault open)",
+		Usage: "high-level YubiKey workflows",
 		Commands: []*cli.Command{
 			{
 				Name:      "provision",
@@ -38,20 +36,12 @@ func cardCmd() *cli.Command {
 			},
 			{
 				Name:      "revoke",
-				Usage:     "revoke all subkeys for a card + publish revocation",
+				Usage:     "revoke all subkeys for a card",
 				ArgsUsage: "<label>",
 				Action:    cardRevoke,
 			},
-			{
-				Name:   "inventory",
-				Usage:  "list all known YubiKeys",
-				Action: cardInventory,
-			},
-			{
-				Name:   "discover",
-				Usage:  "detect connected YubiKey and add to inventory",
-				Action: cardDiscover,
-			},
+			{Name: "inventory", Usage: "list all known YubiKeys", Action: cardInventory},
+			{Name: "discover", Usage: "detect connected YubiKey and add to inventory", Action: cardDiscover},
 		},
 	}
 }
@@ -59,404 +49,154 @@ func cardCmd() *cli.Command {
 func cardProvision(ctx context.Context, cmd *cli.Command) error {
 	label := cmd.Args().First()
 	if label == "" {
-		return fmt.Errorf("provision requires a card label")
+		return fmt.Errorf("card provision: missing <label>")
 	}
 
-	client, err := newGPGClient(ctx)
+	client, err := ensureClient(ctx)
 	if err != nil {
-		return err
+		return fmt.Errorf("card provision: %w", err)
 	}
+	defer client.Close()
 
-	cfg, err := loadGPGConfig(ctx, client)
+	vaultName, err := resolveVaultName(ctx, client, cmd)
 	if err != nil {
-		return err
+		return fmt.Errorf("card provision: %w", err)
 	}
 
-	// Generate subkeys.
-	if err := client.GenerateSubkeys(ctx, gpg.SubkeyOpts{
-		MasterFP: cfg.MasterFP,
-		Algo:     cfg.SubkeyAlgo,
-		Expiry:   cfg.SubkeyExpiry,
-	}); err != nil {
-		return fmt.Errorf("provision: generate subkeys: %w", err)
-	}
-
-	// Find the latest S/E/A subkeys and move to card.
-	keys, listErr := client.ListSecretKeys(ctx)
-	if listErr != nil {
-		return fmt.Errorf("provision: list keys: %w", listErr)
-	}
-
-	keyIDs := gpg.LatestSubkeyIDs(keys)
-	if len(keyIDs) == 0 {
-		return fmt.Errorf("provision: no S/E/A subkeys found")
-	}
-
-	if err := client.MoveToCard(ctx, cfg.MasterFP, keyIDs); err != nil {
-		return fmt.Errorf("provision: to-card: %w", err)
-	}
-
-	// Publish to enabled servers.
-	targets, _ := enabledPublishTargets(client)
-	results := client.Publish(ctx, cfg.MasterFP, targets)
-	logger := loggerFrom(ctx)
-	for _, r := range results {
-		if r.Err != nil {
-			logger.WarnContext(ctx, "publish failed",
-				slog.String("target", r.Target.Type),
-				slog.String("error", r.Err.Error()),
-			)
-		}
-	}
-
-	// SSH pubkey.
-	sshPath, err := client.ExportSSHPubKey(ctx, cfg.MasterFP)
+	resp, err := client.Card.Provision(ctx, connect.NewRequest(&v1.ProvisionRequest{
+		VaultName:   vaultName,
+		Label:       label,
+		Description: cmd.String("description"),
+		SameKeys:    cmd.Bool("same-keys"),
+		UniqueKeys:  cmd.Bool("unique-keys"),
+	}))
 	if err != nil {
-		logger.WarnContext(ctx, "ssh pubkey export failed",
-			slog.String("error", err.Error()),
-		)
-	} else {
-		fmt.Fprintln(os.Stderr, "SSH pubkey:", sshPath)
+		return fmt.Errorf("card provision: %w", err)
 	}
-
-	// Update inventory.
-	inv, err := client.LoadInventory()
-	if err != nil {
-		return fmt.Errorf("provision: load inventory: %w", err)
+	fmt.Fprintf(os.Stderr, "provisioned %s (serial %s)\n", label, resp.Msg.GetCard().GetSerial())
+	if p := resp.Msg.GetSshPubkeyPath(); p != "" {
+		fmt.Fprintf(os.Stderr, "ssh pubkey: %s\n", p)
 	}
-
-	info, cardErr := client.CardStatus(ctx)
-	if cardErr != nil {
-		return fmt.Errorf("provision: card status: %w", cardErr)
-	}
-
-	mode := "same-keys"
-	if cmd.Bool("unique-keys") {
-		mode = "unique-keys"
-	}
-
-	// Build subkey refs from the keys we just moved, using keyIDs from before
-	// MoveToCard rather than CardSerial matching (GPG may not have updated
-	// the card serial in its keyring yet).
-	movedSet := make(map[string]struct{}, len(keyIDs))
-	for _, id := range keyIDs {
-		movedSet[id] = struct{}{}
-	}
-	var subkeys []gpg.SubKeyRef
-	for i := range keys {
-		if _, ok := movedSet[keys[i].KeyID]; ok {
-			subkeys = append(subkeys, gpg.SubKeyRef{
-				KeyID:   keys[i].KeyID,
-				Usage:   gpg.UsageLabel(keys[i].Usage),
-				Created: keys[i].Created,
-				Expires: keys[i].Expires,
-			})
-		}
-	}
-
-	entry := gpg.YubiKeyEntry{
-		Serial:        info.Serial,
-		Label:         label,
-		Model:         info.Model,
-		Description:   cmd.String("description"),
-		Provisioning:  mode,
-		Subkeys:       subkeys,
-		ProvisionedAt: time.Now().UTC(),
-		Status:        "active",
-	}
-
-	inv.YubiKeys = append(inv.YubiKeys, entry)
-	if err := client.SaveInventory(inv); err != nil {
-		return fmt.Errorf("provision: save inventory: %w", err)
-	}
-
-	// Audit.
-	return audit.Append(client.HomeDir(), audit.Entry{
-		Action:  "provision-card",
-		Details: fmt.Sprintf("provisioned %s (%s) as %q", info.Serial, info.Model, label),
-		Metadata: map[string]string{
-			"serial": info.Serial,
-			"label":  label,
-			"mode":   mode,
-		},
-	})
+	return nil
 }
 
 func cardRotate(ctx context.Context, cmd *cli.Command) error {
 	label := cmd.Args().First()
 	if label == "" {
-		return fmt.Errorf("rotate requires a card label or serial")
+		return fmt.Errorf("card rotate: missing <label>")
 	}
 
-	client, err := newGPGClient(ctx)
+	client, err := ensureClient(ctx)
 	if err != nil {
-		return err
+		return fmt.Errorf("card rotate: %w", err)
 	}
+	defer client.Close()
 
-	cfg, err := loadGPGConfig(ctx, client)
+	vaultName, err := resolveVaultName(ctx, client, cmd)
 	if err != nil {
-		return err
+		return fmt.Errorf("card rotate: %w", err)
 	}
 
-	// Find the card in inventory.
-	inv, err := client.LoadInventory()
+	resp, err := client.Card.Rotate(ctx, connect.NewRequest(&v1.RotateRequest{
+		VaultName: vaultName,
+		Label:     label,
+	}))
 	if err != nil {
-		return fmt.Errorf("rotate: load inventory: %w", err)
+		return fmt.Errorf("card rotate: %w", err)
 	}
-
-	entry := inv.FindByLabel(label)
-	if entry == nil {
-		return fmt.Errorf("rotate: YubiKey %q not found in inventory", label)
-	}
-
-	// Revoke old subkeys.
-	for i := range entry.Subkeys {
-		if err := client.Revoke(ctx, cfg.MasterFP, entry.Subkeys[i].KeyID); err != nil {
-			return fmt.Errorf("rotate: revoke %s: %w", entry.Subkeys[i].KeyID, err)
-		}
-	}
-
-	// Generate new subkeys.
-	if err := client.GenerateSubkeys(ctx, gpg.SubkeyOpts{
-		MasterFP: cfg.MasterFP,
-		Algo:     cfg.SubkeyAlgo,
-		Expiry:   cfg.SubkeyExpiry,
-	}); err != nil {
-		return fmt.Errorf("rotate: generate subkeys: %w", err)
-	}
-
-	// Find the latest S/E/A subkeys (just generated) and move to card.
-	rotateKeys, rotateListErr := client.ListSecretKeys(ctx)
-	if rotateListErr != nil {
-		return fmt.Errorf("rotate: list keys: %w", rotateListErr)
-	}
-
-	keyIDs := gpg.LatestSubkeyIDs(rotateKeys)
-	if len(keyIDs) == 0 {
-		return fmt.Errorf("rotate: no S/E/A subkeys found after generation")
-	}
-
-	if err := client.MoveToCard(ctx, cfg.MasterFP, keyIDs); err != nil {
-		return fmt.Errorf("rotate: to-card: %w", err)
-	}
-
-	// Publish to enabled servers.
-	rotateTargets, _ := enabledPublishTargets(client)
-	results := client.Publish(ctx, cfg.MasterFP, rotateTargets)
-	logger := loggerFrom(ctx)
-	for _, r := range results {
-		if r.Err != nil {
-			logger.WarnContext(ctx, "publish failed",
-				slog.String("target", r.Target.Type),
-				slog.String("error", r.Err.Error()),
-			)
-		}
-	}
-
-	// SSH pubkey.
-	if _, sshErr := client.ExportSSHPubKey(ctx, cfg.MasterFP); sshErr != nil {
-		logger.WarnContext(ctx, "ssh pubkey export failed",
-			slog.String("error", sshErr.Error()),
-		)
-	}
-
-	// Update inventory subkey refs with the keys we just moved.
-	// Use keyIDs from the generation step rather than CardSerial matching,
-	// because GPG may not have updated the card serial in its keyring yet.
-	movedSet := make(map[string]struct{}, len(keyIDs))
-	for _, id := range keyIDs {
-		movedSet[id] = struct{}{}
-	}
-	var newSubkeys []gpg.SubKeyRef
-	for i := range rotateKeys {
-		if _, ok := movedSet[rotateKeys[i].KeyID]; ok {
-			newSubkeys = append(newSubkeys, gpg.SubKeyRef{
-				KeyID:   rotateKeys[i].KeyID,
-				Usage:   gpg.UsageLabel(rotateKeys[i].Usage),
-				Created: rotateKeys[i].Created,
-				Expires: rotateKeys[i].Expires,
-			})
-		}
-	}
-	entry.Subkeys = newSubkeys
-	if err := client.SaveInventory(inv); err != nil {
-		return fmt.Errorf("rotate: save inventory: %w", err)
-	}
-
-	// Audit.
-	return audit.Append(client.HomeDir(), audit.Entry{
-		Action:  "rotate-card",
-		Details: fmt.Sprintf("rotated subkeys for %q (%s)", label, entry.Serial),
-		Metadata: map[string]string{
-			"serial": entry.Serial,
-			"label":  label,
-		},
-	})
+	fmt.Fprintf(os.Stderr, "rotated %s (serial %s)\n", label, resp.Msg.GetCard().GetSerial())
+	return nil
 }
 
 func cardRevoke(ctx context.Context, cmd *cli.Command) error {
 	label := cmd.Args().First()
 	if label == "" {
-		return fmt.Errorf("revoke requires a card label or serial")
+		return fmt.Errorf("card revoke: missing <label>")
 	}
 
-	client, err := newGPGClient(ctx)
+	client, err := ensureClient(ctx)
 	if err != nil {
-		return err
+		return fmt.Errorf("card revoke: %w", err)
 	}
+	defer client.Close()
 
-	cfg, err := loadGPGConfig(ctx, client)
+	vaultName, err := resolveVaultName(ctx, client, cmd)
 	if err != nil {
-		return err
+		return fmt.Errorf("card revoke: %w", err)
 	}
 
-	inv, err := client.LoadInventory()
+	_, err = client.Card.Revoke(ctx, connect.NewRequest(&v1.RevokeCardRequest{
+		VaultName: vaultName,
+		Label:     label,
+	}))
 	if err != nil {
-		return fmt.Errorf("card revoke: load inventory: %w", err)
+		return fmt.Errorf("card revoke: %w", err)
 	}
-
-	entry := inv.FindByLabel(label)
-	if entry == nil {
-		return fmt.Errorf("card revoke: YubiKey %q not found in inventory", label)
-	}
-
-	// Revoke all subkeys.
-	for i := range entry.Subkeys {
-		if err := client.Revoke(ctx, cfg.MasterFP, entry.Subkeys[i].KeyID); err != nil {
-			return fmt.Errorf("card revoke: revoke %s: %w", entry.Subkeys[i].KeyID, err)
-		}
-	}
-
-	entry.Status = "revoked"
-	if err := client.SaveInventory(inv); err != nil {
-		return fmt.Errorf("card revoke: save inventory: %w", err)
-	}
-
-	// Publish revocation to enabled servers.
-	revokeTargets, _ := enabledPublishTargets(client)
-	results := client.Publish(ctx, cfg.MasterFP, revokeTargets)
-	logger := loggerFrom(ctx)
-	for _, r := range results {
-		if r.Err != nil {
-			logger.WarnContext(ctx, "publish revocation failed",
-				slog.String("target", r.Target.Type),
-				slog.String("error", r.Err.Error()),
-			)
-		}
-	}
-
-	return audit.Append(client.HomeDir(), audit.Entry{
-		Action:  "revoke-card",
-		Details: fmt.Sprintf("revoked all subkeys for %q (%s)", label, entry.Serial),
-		Metadata: map[string]string{
-			"serial": entry.Serial,
-			"label":  label,
-		},
-	})
-}
-
-func cardInventory(ctx context.Context, _ *cli.Command) error {
-	client, err := newGPGClient(ctx)
-	if err != nil {
-		return err
-	}
-
-	inv, err := client.LoadInventory()
-	if err != nil {
-		return err
-	}
-
-	if len(inv.YubiKeys) == 0 {
-		fmt.Println("No YubiKeys in inventory.")
-		return nil
-	}
-
-	w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
-	_, _ = fmt.Fprintln(w, "SERIAL\tLABEL\tMODEL\tSTATUS\tSUBKEYS\tDESCRIPTION")
-	for i := range inv.YubiKeys {
-		e := &inv.YubiKeys[i]
-		_, _ = fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%d\t%s\n",
-			e.Serial, e.Label, e.Model, e.Status, len(e.Subkeys), e.Description)
-	}
-	if err := w.Flush(); err != nil {
-		return err
-	}
-
-	if !gpg.YkmanAvailable() {
-		hasGeneric := false
-		for i := range inv.YubiKeys {
-			if inv.YubiKeys[i].Model == "" || inv.YubiKeys[i].Model == "Yubico YubiKey" {
-				hasGeneric = true
-				break
-			}
-		}
-		if hasGeneric {
-			fmt.Fprintln(os.Stderr, "\nTip: install ykman (yubikey-manager) for more specific model detection.")
-		}
-	}
-
+	fmt.Fprintf(os.Stderr, "revoked %s\n", label)
 	return nil
 }
 
-func cardDiscover(ctx context.Context, _ *cli.Command) error {
-	client, err := newGPGClient(ctx)
+func cardInventory(ctx context.Context, cmd *cli.Command) error {
+	client, err := ensureClient(ctx)
 	if err != nil {
-		return err
+		return fmt.Errorf("card inventory: %w", err)
+	}
+	defer client.Close()
+
+	vaultName, err := resolveVaultName(ctx, client, cmd)
+	if err != nil {
+		return fmt.Errorf("card inventory: %w", err)
 	}
 
-	entry, err := client.DiscoverCard(ctx)
+	resp, err := client.Card.Inventory(ctx, connect.NewRequest(&v1.InventoryRequest{VaultName: vaultName}))
 	if err != nil {
-		return err
+		return fmt.Errorf("card inventory: %w", err)
 	}
 
-	// Check if card is already in inventory.
-	inv, err := client.LoadInventory()
-	if err != nil {
-		return fmt.Errorf("discover: load inventory: %w", err)
-	}
-
-	if existing := inv.FindByLabel(entry.Serial); existing != nil {
-		// Update model if ykman provided a more specific one.
-		if entry.Model != "" && entry.Model != existing.Model &&
-			(existing.Model == "" || existing.Model == "Yubico YubiKey") {
-			existing.Model = entry.Model
-		}
-		// Always sync subkey refs to match what's actually on the card.
-		existing.Subkeys = entry.Subkeys
-		if err := client.SaveInventory(inv); err != nil {
-			return fmt.Errorf("discover: save inventory: %w", err)
-		}
-		fmt.Fprintf(os.Stderr, "Already in inventory as %q (%s)\n", existing.Label, existing.Serial)
+	cards := resp.Msg.GetCards()
+	if len(cards) == 0 {
+		fmt.Println("No cards in inventory.")
 		return nil
 	}
-
-	fmt.Printf("Found YubiKey: serial %s, model %s\n", entry.Serial, entry.Model)
-	for i := range entry.Subkeys {
-		fmt.Printf("  %s (%s)\n", entry.Subkeys[i].KeyID, entry.Subkeys[i].Usage)
+	w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
+	_, _ = fmt.Fprintln(w, "LABEL\tSERIAL\tMODEL\tSTATUS\tPROVISIONING\tDESCRIPTION")
+	for _, c := range cards {
+		_, _ = fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\t%s\n",
+			dash(c.GetLabel()),
+			dash(c.GetSerial()),
+			dash(c.GetModel()),
+			dash(c.GetStatus()),
+			dash(c.GetProvisioning()),
+			dash(c.GetDescription()),
+		)
 	}
+	return w.Flush()
+}
 
-	// Prompt for label and description.
-	label, err := promptLine("Label: ")
+func cardDiscover(ctx context.Context, cmd *cli.Command) error {
+	client, err := ensureClient(ctx)
 	if err != nil {
-		return fmt.Errorf("read label: %w", err)
+		return fmt.Errorf("card discover: %w", err)
 	}
-	if label == "" {
-		return fmt.Errorf("label is required")
-	}
-	entry.Label = label
+	defer client.Close()
 
-	desc, err := promptLine("Description (optional): ")
+	vaultName, err := resolveVaultName(ctx, client, cmd)
 	if err != nil {
-		return fmt.Errorf("read description: %w", err)
-	}
-	entry.Description = desc
-
-	// Save to inventory.
-	inv.YubiKeys = append(inv.YubiKeys, *entry)
-	if err := client.SaveInventory(inv); err != nil {
-		return fmt.Errorf("discover: save inventory: %w", err)
+		return fmt.Errorf("card discover: %w", err)
 	}
 
-	fmt.Fprintf(os.Stderr, "Added %q (%s) to inventory.\n", label, entry.Serial)
+	resp, err := client.Card.Discover(ctx, connect.NewRequest(&v1.DiscoverRequest{
+		VaultName:   vaultName,
+		Label:       cmd.Args().Get(0),
+		Description: cmd.String("description"),
+	}))
+	if err != nil {
+		return fmt.Errorf("card discover: %w", err)
+	}
+	fmt.Fprintf(os.Stderr, "discovered %s (serial %s, already_known=%t)\n",
+		resp.Msg.GetCard().GetLabel(),
+		resp.Msg.GetCard().GetSerial(),
+		resp.Msg.GetAlreadyInInventory(),
+	)
 	return nil
 }

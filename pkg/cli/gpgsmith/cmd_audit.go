@@ -6,9 +6,10 @@ import (
 	"os"
 	"text/tabwriter"
 
+	"connectrpc.com/connect"
 	"github.com/urfave/cli/v3"
 
-	"github.com/excavador/locksmith/pkg/audit"
+	v1 "github.com/excavador/locksmith/pkg/gen/gpgsmith/v1"
 )
 
 func auditCmd() *cli.Command {
@@ -28,34 +29,39 @@ func auditCmd() *cli.Command {
 	}
 }
 
-func auditShow(_ context.Context, cmd *cli.Command) error {
-	gnupghome := os.Getenv("GNUPGHOME")
-	if gnupghome == "" {
-		return fmt.Errorf("GNUPGHOME not set (run vault open first)")
-	}
-
-	entries, err := audit.Load(gnupghome)
+func auditShow(ctx context.Context, cmd *cli.Command) error {
+	client, err := ensureClient(ctx)
 	if err != nil {
-		return err
+		return fmt.Errorf("audit show: %w", err)
+	}
+	defer client.Close()
+
+	vaultName, err := resolveVaultName(ctx, client, cmd)
+	if err != nil {
+		return fmt.Errorf("audit show: %w", err)
 	}
 
+	resp, err := client.Audit.Show(ctx, connect.NewRequest(&v1.ShowRequest{
+		VaultName: vaultName,
+		Last:      int32(cmd.Int("last")), //nolint:gosec // user-supplied, bounded by int32 proto field
+	}))
+	if err != nil {
+		return fmt.Errorf("audit show: %w", err)
+	}
+
+	entries := resp.Msg.GetEntries()
 	if len(entries) == 0 {
 		fmt.Println("No audit entries.")
 		return nil
 	}
 
-	last := cmd.Int("last")
-	if last > 0 && last < len(entries) {
-		entries = entries[len(entries)-last:]
-	}
-
 	w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
 	_, _ = fmt.Fprintln(w, "TIMESTAMP\tACTION\tDETAILS")
-	for i := range entries {
+	for _, e := range entries {
 		_, _ = fmt.Fprintf(w, "%s\t%s\t%s\n",
-			entries[i].Timestamp.Format("2006-01-02 15:04:05"),
-			entries[i].Action,
-			entries[i].Details,
+			e.GetTimestamp().AsTime().Format("2006-01-02 15:04:05"),
+			e.GetAction(),
+			e.GetDetails(),
 		)
 	}
 	return w.Flush()

@@ -2,7 +2,79 @@
 
 ## Unreleased
 
+### Breaking
+
+- **The CLI is now a thin ConnectRPC client of the daemon.** Every
+  `gpgsmith <noun> <verb>` command auto-spawns the daemon via
+  `EnsureDaemon` (or uses the already-running one) and talks to it over
+  the per-user Unix socket. No CLI command touches GPG, the vault, or
+  the audit log directly anymore.
+- **The interactive shell wrapper is gone.** `gpgsmith vault open <name>`
+  no longer spawns `$SHELL` with `GNUPGHOME` set; instead it hands the
+  session to the daemon and returns. Subsequent commands
+  (`gpgsmith keys list`, `gpgsmith card provision`, ...) operate on the
+  daemon-held session.
+- **`GPGSMITH_VAULT_KEY` and `GPGSMITH_SESSION` env vars are no longer
+  used.** Remove any `eval "$(gpgsmith vault open ...)"` patterns from
+  your shell aliases / scripts. The daemon holds the vault passphrase
+  in memory for the duration of the session.
+- **`gpgsmith vault open` now takes the vault name as a positional
+  argument** (`gpgsmith vault open work`), matching `vault seal`,
+  `vault discard`, and the other session-bearing commands. The root
+  `--vault` flag is used by per-session commands like `keys list` when
+  the daemon has multiple vaults open.
+- **`gpgsmith vault restore` removed.** Use `gpgsmith vault export <name>
+  <target>` to materialize a specific vault's latest canonical if you
+  need the escape hatch.
+
 ### Added
+
+- **`gpgsmith vault status`** — shows which vaults the daemon currently
+  has open and which ones have a recoverable ephemeral on disk ready to
+  be resumed.
+- **`gpgsmith vault export <name> <target>`** — offline escape hatch
+  that decrypts the latest canonical of the named vault to a
+  user-supplied directory. Does not create a session and does not touch
+  daemon state.
+- **`gpgsmith vault trust <name> <fp>`** — explicit TOFU re-anchor after
+  a legitimate master-key rotation.
+- **`gpgsmith vault create <name>`** — new semantics: creates a vault
+  registry entry, writes the vault directory, encrypts an empty initial
+  snapshot, and opens a session on it. Follow up with `gpgsmith keys
+  create` to generate the master key.
+- **`VaultService.Create` RPC** — the wire surface backing
+  `gpgsmith vault create` and `gpgsmith setup`.
+- **Real `VaultService.Export` / `Backend.ExportVault` implementation**
+  on the daemon side (was a stub in commit 5b).
+- **Auto-spawn daemon on every user-facing command.** If the daemon is
+  not running when you invoke a CLI command, a detached copy starts
+  automatically; the first command pays the startup cost and subsequent
+  commands are sub-millisecond RPCs.
+- **Idle auto-seal-to-ephemeral.** After 5 minutes of no activity, the
+  daemon flushes the in-memory workdir to the encrypted ephemeral file
+  pair and drops the session state from memory, allowing the next
+  `vault open` on the same vault to offer to resume.
+
+### Removed
+
+- **`pkg/gpgsmith/lock.go` and `pkg/gpgsmith/lock_test.go`** (flock-based
+  single-holder enforcement). The daemon's in-process session map is
+  now the single source of truth for which vaults are open; cross-host
+  coordination was never possible via flock anyway.
+- **`tty.go` session wrapper machinery**: `newSessionRC`, `bashSessionRC`,
+  `zshSessionRC`, `sessionRC`, `shellEscapeSingleQuote`, and
+  `runInteractiveSession` are deleted. `promptLine`, `readPassphrase`,
+  and `readPassphraseWithConfirm` remain as small terminal helpers.
+
+### Migration
+
+- Remove `eval $(gpgsmith vault open ...)` or equivalent patterns from
+  your shell rc files — they are no-ops now.
+- The daemon binary is the same `gpgsmith` binary. You can start it
+  explicitly with `gpgsmith daemon start`, or let auto-spawn handle it
+  on first use.
+
+### Added (earlier, from prior commits)
 
 - **`pkg/wire` ConnectRPC adapter layer.** The hand-written ConnectRPC
   layer that wraps the generated stubs from `pkg/gen` and adapts them

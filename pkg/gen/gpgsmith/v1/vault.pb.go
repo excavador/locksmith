@@ -741,6 +741,118 @@ func (x *SnapshotsResponse) GetSnapshots() []*Snapshot {
 	return nil
 }
 
+type CreateVaultRequest struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Name          string                 `protobuf:"bytes,1,opt,name=name,proto3" json:"name,omitempty"`
+	Path          string                 `protobuf:"bytes,2,opt,name=path,proto3" json:"path,omitempty"` // absolute directory to create and initialize
+	Passphrase    string                 `protobuf:"bytes,3,opt,name=passphrase,proto3" json:"passphrase,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *CreateVaultRequest) Reset() {
+	*x = CreateVaultRequest{}
+	mi := &file_gpgsmith_v1_vault_proto_msgTypes[14]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *CreateVaultRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*CreateVaultRequest) ProtoMessage() {}
+
+func (x *CreateVaultRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_gpgsmith_v1_vault_proto_msgTypes[14]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use CreateVaultRequest.ProtoReflect.Descriptor instead.
+func (*CreateVaultRequest) Descriptor() ([]byte, []int) {
+	return file_gpgsmith_v1_vault_proto_rawDescGZIP(), []int{14}
+}
+
+func (x *CreateVaultRequest) GetName() string {
+	if x != nil {
+		return x.Name
+	}
+	return ""
+}
+
+func (x *CreateVaultRequest) GetPath() string {
+	if x != nil {
+		return x.Path
+	}
+	return ""
+}
+
+func (x *CreateVaultRequest) GetPassphrase() string {
+	if x != nil {
+		return x.Passphrase
+	}
+	return ""
+}
+
+type CreateVaultResponse struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Snapshot      *Snapshot              `protobuf:"bytes,1,opt,name=snapshot,proto3" json:"snapshot,omitempty"` // the initial empty snapshot
+	Session       *SessionInfo           `protobuf:"bytes,2,opt,name=session,proto3" json:"session,omitempty"`   // the newly-opened session on the new vault
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *CreateVaultResponse) Reset() {
+	*x = CreateVaultResponse{}
+	mi := &file_gpgsmith_v1_vault_proto_msgTypes[15]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *CreateVaultResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*CreateVaultResponse) ProtoMessage() {}
+
+func (x *CreateVaultResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_gpgsmith_v1_vault_proto_msgTypes[15]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use CreateVaultResponse.ProtoReflect.Descriptor instead.
+func (*CreateVaultResponse) Descriptor() ([]byte, []int) {
+	return file_gpgsmith_v1_vault_proto_rawDescGZIP(), []int{15}
+}
+
+func (x *CreateVaultResponse) GetSnapshot() *Snapshot {
+	if x != nil {
+		return x.Snapshot
+	}
+	return nil
+}
+
+func (x *CreateVaultResponse) GetSession() *SessionInfo {
+	if x != nil {
+		return x.Session
+	}
+	return nil
+}
+
 type ImportRequest struct {
 	state           protoimpl.MessageState `protogen:"open.v1"`
 	SourcePath      string                 `protobuf:"bytes,1,opt,name=source_path,json=sourcePath,proto3" json:"source_path,omitempty"` // a local directory containing a GNUPGHOME
@@ -752,7 +864,7 @@ type ImportRequest struct {
 
 func (x *ImportRequest) Reset() {
 	*x = ImportRequest{}
-	mi := &file_gpgsmith_v1_vault_proto_msgTypes[14]
+	mi := &file_gpgsmith_v1_vault_proto_msgTypes[16]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -764,7 +876,7 @@ func (x *ImportRequest) String() string {
 func (*ImportRequest) ProtoMessage() {}
 
 func (x *ImportRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_gpgsmith_v1_vault_proto_msgTypes[14]
+	mi := &file_gpgsmith_v1_vault_proto_msgTypes[16]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -777,7 +889,7 @@ func (x *ImportRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ImportRequest.ProtoReflect.Descriptor instead.
 func (*ImportRequest) Descriptor() ([]byte, []int) {
-	return file_gpgsmith_v1_vault_proto_rawDescGZIP(), []int{14}
+	return file_gpgsmith_v1_vault_proto_rawDescGZIP(), []int{16}
 }
 
 func (x *ImportRequest) GetSourcePath() string {
@@ -810,7 +922,7 @@ type ImportResponse struct {
 
 func (x *ImportResponse) Reset() {
 	*x = ImportResponse{}
-	mi := &file_gpgsmith_v1_vault_proto_msgTypes[15]
+	mi := &file_gpgsmith_v1_vault_proto_msgTypes[17]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -822,7 +934,7 @@ func (x *ImportResponse) String() string {
 func (*ImportResponse) ProtoMessage() {}
 
 func (x *ImportResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_gpgsmith_v1_vault_proto_msgTypes[15]
+	mi := &file_gpgsmith_v1_vault_proto_msgTypes[17]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -835,7 +947,7 @@ func (x *ImportResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ImportResponse.ProtoReflect.Descriptor instead.
 func (*ImportResponse) Descriptor() ([]byte, []int) {
-	return file_gpgsmith_v1_vault_proto_rawDescGZIP(), []int{15}
+	return file_gpgsmith_v1_vault_proto_rawDescGZIP(), []int{17}
 }
 
 func (x *ImportResponse) GetSnapshot() *Snapshot {
@@ -856,7 +968,7 @@ type ExportRequest struct {
 
 func (x *ExportRequest) Reset() {
 	*x = ExportRequest{}
-	mi := &file_gpgsmith_v1_vault_proto_msgTypes[16]
+	mi := &file_gpgsmith_v1_vault_proto_msgTypes[18]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -868,7 +980,7 @@ func (x *ExportRequest) String() string {
 func (*ExportRequest) ProtoMessage() {}
 
 func (x *ExportRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_gpgsmith_v1_vault_proto_msgTypes[16]
+	mi := &file_gpgsmith_v1_vault_proto_msgTypes[18]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -881,7 +993,7 @@ func (x *ExportRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ExportRequest.ProtoReflect.Descriptor instead.
 func (*ExportRequest) Descriptor() ([]byte, []int) {
-	return file_gpgsmith_v1_vault_proto_rawDescGZIP(), []int{16}
+	return file_gpgsmith_v1_vault_proto_rawDescGZIP(), []int{18}
 }
 
 func (x *ExportRequest) GetVaultName() string {
@@ -915,7 +1027,7 @@ type ExportResponse struct {
 
 func (x *ExportResponse) Reset() {
 	*x = ExportResponse{}
-	mi := &file_gpgsmith_v1_vault_proto_msgTypes[17]
+	mi := &file_gpgsmith_v1_vault_proto_msgTypes[19]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -927,7 +1039,7 @@ func (x *ExportResponse) String() string {
 func (*ExportResponse) ProtoMessage() {}
 
 func (x *ExportResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_gpgsmith_v1_vault_proto_msgTypes[17]
+	mi := &file_gpgsmith_v1_vault_proto_msgTypes[19]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -940,7 +1052,7 @@ func (x *ExportResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ExportResponse.ProtoReflect.Descriptor instead.
 func (*ExportResponse) Descriptor() ([]byte, []int) {
-	return file_gpgsmith_v1_vault_proto_rawDescGZIP(), []int{17}
+	return file_gpgsmith_v1_vault_proto_rawDescGZIP(), []int{19}
 }
 
 func (x *ExportResponse) GetTargetDir() string {
@@ -967,7 +1079,7 @@ type TrustRequest struct {
 
 func (x *TrustRequest) Reset() {
 	*x = TrustRequest{}
-	mi := &file_gpgsmith_v1_vault_proto_msgTypes[18]
+	mi := &file_gpgsmith_v1_vault_proto_msgTypes[20]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -979,7 +1091,7 @@ func (x *TrustRequest) String() string {
 func (*TrustRequest) ProtoMessage() {}
 
 func (x *TrustRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_gpgsmith_v1_vault_proto_msgTypes[18]
+	mi := &file_gpgsmith_v1_vault_proto_msgTypes[20]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -992,7 +1104,7 @@ func (x *TrustRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use TrustRequest.ProtoReflect.Descriptor instead.
 func (*TrustRequest) Descriptor() ([]byte, []int) {
-	return file_gpgsmith_v1_vault_proto_rawDescGZIP(), []int{18}
+	return file_gpgsmith_v1_vault_proto_rawDescGZIP(), []int{20}
 }
 
 func (x *TrustRequest) GetVaultName() string {
@@ -1017,7 +1129,7 @@ type TrustResponse struct {
 
 func (x *TrustResponse) Reset() {
 	*x = TrustResponse{}
-	mi := &file_gpgsmith_v1_vault_proto_msgTypes[19]
+	mi := &file_gpgsmith_v1_vault_proto_msgTypes[21]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1029,7 +1141,7 @@ func (x *TrustResponse) String() string {
 func (*TrustResponse) ProtoMessage() {}
 
 func (x *TrustResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_gpgsmith_v1_vault_proto_msgTypes[19]
+	mi := &file_gpgsmith_v1_vault_proto_msgTypes[21]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1042,7 +1154,7 @@ func (x *TrustResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use TrustResponse.ProtoReflect.Descriptor instead.
 func (*TrustResponse) Descriptor() ([]byte, []int) {
-	return file_gpgsmith_v1_vault_proto_rawDescGZIP(), []int{19}
+	return file_gpgsmith_v1_vault_proto_rawDescGZIP(), []int{21}
 }
 
 var File_gpgsmith_v1_vault_proto protoreflect.FileDescriptor
@@ -1096,7 +1208,16 @@ const file_gpgsmith_v1_vault_proto_rawDesc = "" +
 	"\n" +
 	"vault_name\x18\x01 \x01(\tR\tvaultName\"H\n" +
 	"\x11SnapshotsResponse\x123\n" +
-	"\tsnapshots\x18\x01 \x03(\v2\x15.gpgsmith.v1.SnapshotR\tsnapshots\"|\n" +
+	"\tsnapshots\x18\x01 \x03(\v2\x15.gpgsmith.v1.SnapshotR\tsnapshots\"\\\n" +
+	"\x12CreateVaultRequest\x12\x12\n" +
+	"\x04name\x18\x01 \x01(\tR\x04name\x12\x12\n" +
+	"\x04path\x18\x02 \x01(\tR\x04path\x12\x1e\n" +
+	"\n" +
+	"passphrase\x18\x03 \x01(\tR\n" +
+	"passphrase\"|\n" +
+	"\x13CreateVaultResponse\x121\n" +
+	"\bsnapshot\x18\x01 \x01(\v2\x15.gpgsmith.v1.SnapshotR\bsnapshot\x122\n" +
+	"\asession\x18\x02 \x01(\v2\x18.gpgsmith.v1.SessionInfoR\asession\"|\n" +
 	"\rImportRequest\x12\x1f\n" +
 	"\vsource_path\x18\x01 \x01(\tR\n" +
 	"sourcePath\x12\x1e\n" +
@@ -1122,7 +1243,7 @@ const file_gpgsmith_v1_vault_proto_rawDesc = "" +
 	"\n" +
 	"vault_name\x18\x01 \x01(\tR\tvaultName\x12 \n" +
 	"\vfingerprint\x18\x02 \x01(\tR\vfingerprint\"\x0f\n" +
-	"\rTrustResponse2\xad\x05\n" +
+	"\rTrustResponse2\xfa\x05\n" +
 	"\fVaultService\x12;\n" +
 	"\x04List\x12\x18.gpgsmith.v1.ListRequest\x1a\x19.gpgsmith.v1.ListResponse\x12K\n" +
 	"\x06Status\x12\x1f.gpgsmith.v1.StatusVaultRequest\x1a .gpgsmith.v1.StatusVaultResponse\x12;\n" +
@@ -1130,7 +1251,8 @@ const file_gpgsmith_v1_vault_proto_rawDesc = "" +
 	"\x06Resume\x12\x1a.gpgsmith.v1.ResumeRequest\x1a\x1b.gpgsmith.v1.ResumeResponse\x12;\n" +
 	"\x04Seal\x12\x18.gpgsmith.v1.SealRequest\x1a\x19.gpgsmith.v1.SealResponse\x12D\n" +
 	"\aDiscard\x12\x1b.gpgsmith.v1.DiscardRequest\x1a\x1c.gpgsmith.v1.DiscardResponse\x12J\n" +
-	"\tSnapshots\x12\x1d.gpgsmith.v1.SnapshotsRequest\x1a\x1e.gpgsmith.v1.SnapshotsResponse\x12A\n" +
+	"\tSnapshots\x12\x1d.gpgsmith.v1.SnapshotsRequest\x1a\x1e.gpgsmith.v1.SnapshotsResponse\x12K\n" +
+	"\x06Create\x12\x1f.gpgsmith.v1.CreateVaultRequest\x1a .gpgsmith.v1.CreateVaultResponse\x12A\n" +
 	"\x06Import\x12\x1a.gpgsmith.v1.ImportRequest\x1a\x1b.gpgsmith.v1.ImportResponse\x12A\n" +
 	"\x06Export\x12\x1a.gpgsmith.v1.ExportRequest\x1a\x1b.gpgsmith.v1.ExportResponse\x12>\n" +
 	"\x05Trust\x12\x19.gpgsmith.v1.TrustRequest\x1a\x1a.gpgsmith.v1.TrustResponseB\xa9\x01\n" +
@@ -1150,7 +1272,7 @@ func file_gpgsmith_v1_vault_proto_rawDescGZIP() []byte {
 }
 
 var file_gpgsmith_v1_vault_proto_enumTypes = make([]protoimpl.EnumInfo, 1)
-var file_gpgsmith_v1_vault_proto_msgTypes = make([]protoimpl.MessageInfo, 20)
+var file_gpgsmith_v1_vault_proto_msgTypes = make([]protoimpl.MessageInfo, 22)
 var file_gpgsmith_v1_vault_proto_goTypes = []any{
 	(ResumeRequest_Action)(0),   // 0: gpgsmith.v1.ResumeRequest.Action
 	(*ListRequest)(nil),         // 1: gpgsmith.v1.ListRequest
@@ -1167,56 +1289,62 @@ var file_gpgsmith_v1_vault_proto_goTypes = []any{
 	(*DiscardResponse)(nil),     // 12: gpgsmith.v1.DiscardResponse
 	(*SnapshotsRequest)(nil),    // 13: gpgsmith.v1.SnapshotsRequest
 	(*SnapshotsResponse)(nil),   // 14: gpgsmith.v1.SnapshotsResponse
-	(*ImportRequest)(nil),       // 15: gpgsmith.v1.ImportRequest
-	(*ImportResponse)(nil),      // 16: gpgsmith.v1.ImportResponse
-	(*ExportRequest)(nil),       // 17: gpgsmith.v1.ExportRequest
-	(*ExportResponse)(nil),      // 18: gpgsmith.v1.ExportResponse
-	(*TrustRequest)(nil),        // 19: gpgsmith.v1.TrustRequest
-	(*TrustResponse)(nil),       // 20: gpgsmith.v1.TrustResponse
-	(*VaultRegistryEntry)(nil),  // 21: gpgsmith.v1.VaultRegistryEntry
-	(*SessionInfo)(nil),         // 22: gpgsmith.v1.SessionInfo
-	(*ResumeOption)(nil),        // 23: gpgsmith.v1.ResumeOption
-	(LockSource)(0),             // 24: gpgsmith.v1.LockSource
-	(*Snapshot)(nil),            // 25: gpgsmith.v1.Snapshot
+	(*CreateVaultRequest)(nil),  // 15: gpgsmith.v1.CreateVaultRequest
+	(*CreateVaultResponse)(nil), // 16: gpgsmith.v1.CreateVaultResponse
+	(*ImportRequest)(nil),       // 17: gpgsmith.v1.ImportRequest
+	(*ImportResponse)(nil),      // 18: gpgsmith.v1.ImportResponse
+	(*ExportRequest)(nil),       // 19: gpgsmith.v1.ExportRequest
+	(*ExportResponse)(nil),      // 20: gpgsmith.v1.ExportResponse
+	(*TrustRequest)(nil),        // 21: gpgsmith.v1.TrustRequest
+	(*TrustResponse)(nil),       // 22: gpgsmith.v1.TrustResponse
+	(*VaultRegistryEntry)(nil),  // 23: gpgsmith.v1.VaultRegistryEntry
+	(*SessionInfo)(nil),         // 24: gpgsmith.v1.SessionInfo
+	(*ResumeOption)(nil),        // 25: gpgsmith.v1.ResumeOption
+	(LockSource)(0),             // 26: gpgsmith.v1.LockSource
+	(*Snapshot)(nil),            // 27: gpgsmith.v1.Snapshot
 }
 var file_gpgsmith_v1_vault_proto_depIdxs = []int32{
-	21, // 0: gpgsmith.v1.ListResponse.vaults:type_name -> gpgsmith.v1.VaultRegistryEntry
-	22, // 1: gpgsmith.v1.StatusVaultResponse.open:type_name -> gpgsmith.v1.SessionInfo
-	23, // 2: gpgsmith.v1.StatusVaultResponse.recoverable:type_name -> gpgsmith.v1.ResumeOption
-	24, // 3: gpgsmith.v1.OpenRequest.source:type_name -> gpgsmith.v1.LockSource
-	22, // 4: gpgsmith.v1.OpenResponse.session:type_name -> gpgsmith.v1.SessionInfo
-	23, // 5: gpgsmith.v1.OpenResponse.resume_available:type_name -> gpgsmith.v1.ResumeOption
-	24, // 6: gpgsmith.v1.ResumeRequest.source:type_name -> gpgsmith.v1.LockSource
+	23, // 0: gpgsmith.v1.ListResponse.vaults:type_name -> gpgsmith.v1.VaultRegistryEntry
+	24, // 1: gpgsmith.v1.StatusVaultResponse.open:type_name -> gpgsmith.v1.SessionInfo
+	25, // 2: gpgsmith.v1.StatusVaultResponse.recoverable:type_name -> gpgsmith.v1.ResumeOption
+	26, // 3: gpgsmith.v1.OpenRequest.source:type_name -> gpgsmith.v1.LockSource
+	24, // 4: gpgsmith.v1.OpenResponse.session:type_name -> gpgsmith.v1.SessionInfo
+	25, // 5: gpgsmith.v1.OpenResponse.resume_available:type_name -> gpgsmith.v1.ResumeOption
+	26, // 6: gpgsmith.v1.ResumeRequest.source:type_name -> gpgsmith.v1.LockSource
 	0,  // 7: gpgsmith.v1.ResumeRequest.action:type_name -> gpgsmith.v1.ResumeRequest.Action
-	22, // 8: gpgsmith.v1.ResumeResponse.session:type_name -> gpgsmith.v1.SessionInfo
-	25, // 9: gpgsmith.v1.SealResponse.snapshot:type_name -> gpgsmith.v1.Snapshot
-	25, // 10: gpgsmith.v1.SnapshotsResponse.snapshots:type_name -> gpgsmith.v1.Snapshot
-	25, // 11: gpgsmith.v1.ImportResponse.snapshot:type_name -> gpgsmith.v1.Snapshot
-	1,  // 12: gpgsmith.v1.VaultService.List:input_type -> gpgsmith.v1.ListRequest
-	3,  // 13: gpgsmith.v1.VaultService.Status:input_type -> gpgsmith.v1.StatusVaultRequest
-	5,  // 14: gpgsmith.v1.VaultService.Open:input_type -> gpgsmith.v1.OpenRequest
-	7,  // 15: gpgsmith.v1.VaultService.Resume:input_type -> gpgsmith.v1.ResumeRequest
-	9,  // 16: gpgsmith.v1.VaultService.Seal:input_type -> gpgsmith.v1.SealRequest
-	11, // 17: gpgsmith.v1.VaultService.Discard:input_type -> gpgsmith.v1.DiscardRequest
-	13, // 18: gpgsmith.v1.VaultService.Snapshots:input_type -> gpgsmith.v1.SnapshotsRequest
-	15, // 19: gpgsmith.v1.VaultService.Import:input_type -> gpgsmith.v1.ImportRequest
-	17, // 20: gpgsmith.v1.VaultService.Export:input_type -> gpgsmith.v1.ExportRequest
-	19, // 21: gpgsmith.v1.VaultService.Trust:input_type -> gpgsmith.v1.TrustRequest
-	2,  // 22: gpgsmith.v1.VaultService.List:output_type -> gpgsmith.v1.ListResponse
-	4,  // 23: gpgsmith.v1.VaultService.Status:output_type -> gpgsmith.v1.StatusVaultResponse
-	6,  // 24: gpgsmith.v1.VaultService.Open:output_type -> gpgsmith.v1.OpenResponse
-	8,  // 25: gpgsmith.v1.VaultService.Resume:output_type -> gpgsmith.v1.ResumeResponse
-	10, // 26: gpgsmith.v1.VaultService.Seal:output_type -> gpgsmith.v1.SealResponse
-	12, // 27: gpgsmith.v1.VaultService.Discard:output_type -> gpgsmith.v1.DiscardResponse
-	14, // 28: gpgsmith.v1.VaultService.Snapshots:output_type -> gpgsmith.v1.SnapshotsResponse
-	16, // 29: gpgsmith.v1.VaultService.Import:output_type -> gpgsmith.v1.ImportResponse
-	18, // 30: gpgsmith.v1.VaultService.Export:output_type -> gpgsmith.v1.ExportResponse
-	20, // 31: gpgsmith.v1.VaultService.Trust:output_type -> gpgsmith.v1.TrustResponse
-	22, // [22:32] is the sub-list for method output_type
-	12, // [12:22] is the sub-list for method input_type
-	12, // [12:12] is the sub-list for extension type_name
-	12, // [12:12] is the sub-list for extension extendee
-	0,  // [0:12] is the sub-list for field type_name
+	24, // 8: gpgsmith.v1.ResumeResponse.session:type_name -> gpgsmith.v1.SessionInfo
+	27, // 9: gpgsmith.v1.SealResponse.snapshot:type_name -> gpgsmith.v1.Snapshot
+	27, // 10: gpgsmith.v1.SnapshotsResponse.snapshots:type_name -> gpgsmith.v1.Snapshot
+	27, // 11: gpgsmith.v1.CreateVaultResponse.snapshot:type_name -> gpgsmith.v1.Snapshot
+	24, // 12: gpgsmith.v1.CreateVaultResponse.session:type_name -> gpgsmith.v1.SessionInfo
+	27, // 13: gpgsmith.v1.ImportResponse.snapshot:type_name -> gpgsmith.v1.Snapshot
+	1,  // 14: gpgsmith.v1.VaultService.List:input_type -> gpgsmith.v1.ListRequest
+	3,  // 15: gpgsmith.v1.VaultService.Status:input_type -> gpgsmith.v1.StatusVaultRequest
+	5,  // 16: gpgsmith.v1.VaultService.Open:input_type -> gpgsmith.v1.OpenRequest
+	7,  // 17: gpgsmith.v1.VaultService.Resume:input_type -> gpgsmith.v1.ResumeRequest
+	9,  // 18: gpgsmith.v1.VaultService.Seal:input_type -> gpgsmith.v1.SealRequest
+	11, // 19: gpgsmith.v1.VaultService.Discard:input_type -> gpgsmith.v1.DiscardRequest
+	13, // 20: gpgsmith.v1.VaultService.Snapshots:input_type -> gpgsmith.v1.SnapshotsRequest
+	15, // 21: gpgsmith.v1.VaultService.Create:input_type -> gpgsmith.v1.CreateVaultRequest
+	17, // 22: gpgsmith.v1.VaultService.Import:input_type -> gpgsmith.v1.ImportRequest
+	19, // 23: gpgsmith.v1.VaultService.Export:input_type -> gpgsmith.v1.ExportRequest
+	21, // 24: gpgsmith.v1.VaultService.Trust:input_type -> gpgsmith.v1.TrustRequest
+	2,  // 25: gpgsmith.v1.VaultService.List:output_type -> gpgsmith.v1.ListResponse
+	4,  // 26: gpgsmith.v1.VaultService.Status:output_type -> gpgsmith.v1.StatusVaultResponse
+	6,  // 27: gpgsmith.v1.VaultService.Open:output_type -> gpgsmith.v1.OpenResponse
+	8,  // 28: gpgsmith.v1.VaultService.Resume:output_type -> gpgsmith.v1.ResumeResponse
+	10, // 29: gpgsmith.v1.VaultService.Seal:output_type -> gpgsmith.v1.SealResponse
+	12, // 30: gpgsmith.v1.VaultService.Discard:output_type -> gpgsmith.v1.DiscardResponse
+	14, // 31: gpgsmith.v1.VaultService.Snapshots:output_type -> gpgsmith.v1.SnapshotsResponse
+	16, // 32: gpgsmith.v1.VaultService.Create:output_type -> gpgsmith.v1.CreateVaultResponse
+	18, // 33: gpgsmith.v1.VaultService.Import:output_type -> gpgsmith.v1.ImportResponse
+	20, // 34: gpgsmith.v1.VaultService.Export:output_type -> gpgsmith.v1.ExportResponse
+	22, // 35: gpgsmith.v1.VaultService.Trust:output_type -> gpgsmith.v1.TrustResponse
+	25, // [25:36] is the sub-list for method output_type
+	14, // [14:25] is the sub-list for method input_type
+	14, // [14:14] is the sub-list for extension type_name
+	14, // [14:14] is the sub-list for extension extendee
+	0,  // [0:14] is the sub-list for field type_name
 }
 
 func init() { file_gpgsmith_v1_vault_proto_init() }
@@ -1231,7 +1359,7 @@ func file_gpgsmith_v1_vault_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_gpgsmith_v1_vault_proto_rawDesc), len(file_gpgsmith_v1_vault_proto_rawDesc)),
 			NumEnums:      1,
-			NumMessages:   20,
+			NumMessages:   22,
 			NumExtensions: 0,
 			NumServices:   1,
 		},

@@ -66,6 +66,7 @@ type (
 		DiscardVault(ctx context.Context, name string) error
 		Snapshots(ctx context.Context, name string) ([]vault.Snapshot, error)
 		ImportVault(ctx context.Context, sourcePath, passphrase, targetName string) (vault.Snapshot, error)
+		CreateVault(ctx context.Context, name, path, passphrase string) (snap vault.Snapshot, session SessionInfo, err error)
 		ExportVault(ctx context.Context, name, passphrase, targetDir string) (snapshotName string, err error)
 		TrustVault(ctx context.Context, name, fingerprint string) error
 

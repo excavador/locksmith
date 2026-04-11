@@ -3,16 +3,13 @@ package gpgsmith
 import (
 	"context"
 	"fmt"
-	"log/slog"
 	"os"
-	"os/exec"
-	"strings"
 	"text/tabwriter"
 
+	"connectrpc.com/connect"
 	"github.com/urfave/cli/v3"
 
-	"github.com/excavador/locksmith/pkg/audit"
-	"github.com/excavador/locksmith/pkg/gpg"
+	v1 "github.com/excavador/locksmith/pkg/gen/gpgsmith/v1"
 )
 
 func serverCmd() *cli.Command {
@@ -20,22 +17,7 @@ func serverCmd() *cli.Command {
 		Name:  "server",
 		Usage: "manage publish targets (keyservers and GitHub)",
 		Commands: []*cli.Command{
-			{
-				Name:      "publish",
-				Usage:     "publish public key to enabled servers",
-				ArgsUsage: "[alias...]",
-				Action:    serverPublish,
-			},
-			{
-				Name:   "lookup",
-				Usage:  "check which servers have your public key",
-				Action: serverLookup,
-			},
-			{
-				Name:   "list",
-				Usage:  "list all publish targets",
-				Action: serverList,
-			},
+			{Name: "list", Usage: "list all publish targets", Action: serverList},
 			{
 				Name:      "add",
 				Usage:     "add a custom keyserver",
@@ -60,373 +42,197 @@ func serverCmd() *cli.Command {
 				ArgsUsage: "<alias>",
 				Action:    serverDisable,
 			},
+			{
+				Name:      "publish",
+				Usage:     "publish public key to enabled servers",
+				ArgsUsage: "[alias...]",
+				Action:    serverPublish,
+			},
+			{Name: "lookup", Usage: "check which servers have your public key", Action: serverLookup},
 		},
 	}
 }
 
-func serverList(ctx context.Context, _ *cli.Command) error {
-	client, err := newGPGClient(ctx)
+func serverList(ctx context.Context, cmd *cli.Command) error {
+	client, err := ensureClient(ctx)
 	if err != nil {
-		return err
+		return fmt.Errorf("server list: %w", err)
+	}
+	defer client.Close()
+
+	vaultName, err := resolveVaultName(ctx, client, cmd)
+	if err != nil {
+		return fmt.Errorf("server list: %w", err)
 	}
 
-	reg, err := client.LoadServerRegistry()
+	resp, err := client.Server.List(ctx, connect.NewRequest(&v1.ListServersRequest{VaultName: vaultName}))
 	if err != nil {
-		return err
+		return fmt.Errorf("server list: %w", err)
 	}
 
-	if len(reg.Servers) == 0 {
+	if len(resp.Msg.GetServers()) == 0 {
 		fmt.Println("No servers configured.")
 		return nil
 	}
-
 	w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
 	_, _ = fmt.Fprintln(w, "ALIAS\tTYPE\tURL\tENABLED")
-	for i := range reg.Servers {
-		s := &reg.Servers[i]
-		url := s.URL
-		if url == "" {
-			url = "-"
-		}
+	for _, s := range resp.Msg.GetServers() {
 		enabled := "no"
-		if s.Enabled {
+		if s.GetEnabled() {
 			enabled = "yes"
 		}
-		_, _ = fmt.Fprintf(w, "%s\t%s\t%s\t%s\n", s.Alias, s.Type, url, enabled)
+		_, _ = fmt.Fprintf(w, "%s\t%s\t%s\t%s\n", s.GetAlias(), s.GetType(), dash(s.GetUrl()), enabled)
 	}
 	return w.Flush()
 }
 
 func serverAdd(ctx context.Context, cmd *cli.Command) error {
 	args := cmd.Args()
-	if args.Len() < 2 { //nolint:mnd // alias + url pair
-		return fmt.Errorf("usage: server add <alias> <url>")
+	if args.Len() < 2 { //nolint:mnd // alias + url
+		return fmt.Errorf("server add: usage: add <alias> <url>")
 	}
-
-	alias := args.Get(0)
-	url := args.Get(1)
-
-	if err := gpg.ValidateServerAlias(alias); err != nil {
+	return simpleServerCall(ctx, cmd, "add", func(v string) error {
+		client, err := ensureClient(ctx)
+		if err != nil {
+			return err
+		}
+		defer client.Close()
+		_, err = client.Server.Add(ctx, connect.NewRequest(&v1.AddServerRequest{
+			VaultName: v,
+			Alias:     args.Get(0),
+			Url:       args.Get(1),
+		}))
 		return err
-	}
-
-	// Ensure URL has a scheme.
-	if !strings.HasPrefix(url, "hkps://") && !strings.HasPrefix(url, "hkp://") {
-		url = "hkps://" + url
-	}
-
-	client, err := newGPGClient(ctx)
-	if err != nil {
-		return err
-	}
-
-	reg, err := client.LoadServerRegistry()
-	if err != nil {
-		return err
-	}
-
-	if reg.FindByAlias(alias) != nil {
-		return fmt.Errorf("server %q already exists", alias)
-	}
-
-	reg.Servers = append(reg.Servers, gpg.ServerEntry{
-		Alias:   alias,
-		Type:    gpg.TargetTypeKeyserver,
-		URL:     url,
-		Enabled: true,
 	})
-
-	if err := client.SaveServerRegistry(reg); err != nil {
-		return err
-	}
-
-	fmt.Fprintf(os.Stderr, "Added %q (%s)\n", alias, url)
-	return nil
 }
 
 func serverRemove(ctx context.Context, cmd *cli.Command) error {
 	alias := cmd.Args().First()
 	if alias == "" {
-		return fmt.Errorf("usage: server remove <alias>")
+		return fmt.Errorf("server remove: missing <alias>")
 	}
-
-	client, err := newGPGClient(ctx)
-	if err != nil {
-		return err
-	}
-
-	reg, err := client.LoadServerRegistry()
-	if err != nil {
-		return err
-	}
-
-	found := false
-	var remaining []gpg.ServerEntry
-	for i := range reg.Servers {
-		if reg.Servers[i].Alias == alias {
-			found = true
-			continue
+	return simpleServerCall(ctx, cmd, "remove", func(v string) error {
+		client, err := ensureClient(ctx)
+		if err != nil {
+			return err
 		}
-		remaining = append(remaining, reg.Servers[i])
-	}
-
-	if !found {
-		return fmt.Errorf("server %q not found", alias)
-	}
-
-	reg.Servers = remaining
-	if err := client.SaveServerRegistry(reg); err != nil {
+		defer client.Close()
+		_, err = client.Server.Remove(ctx, connect.NewRequest(&v1.RemoveServerRequest{
+			VaultName: v,
+			Alias:     alias,
+		}))
 		return err
-	}
-
-	fmt.Fprintf(os.Stderr, "Removed %q\n", alias)
-	return nil
+	})
 }
 
 func serverEnable(ctx context.Context, cmd *cli.Command) error {
 	alias := cmd.Args().First()
 	if alias == "" {
-		return fmt.Errorf("usage: server enable <alias>")
+		return fmt.Errorf("server enable: missing <alias>")
 	}
-
-	client, err := newGPGClient(ctx)
-	if err != nil {
-		return err
-	}
-
-	reg, err := client.LoadServerRegistry()
-	if err != nil {
-		return err
-	}
-
-	entry := reg.FindByAlias(alias)
-	if entry == nil {
-		return fmt.Errorf("server %q not found", alias)
-	}
-
-	// GitHub requires extra validation.
-	if entry.Type == gpg.TargetTypeGitHub {
-		if err := validateGitHubAccess(ctx); err != nil {
+	return simpleServerCall(ctx, cmd, "enable", func(v string) error {
+		client, err := ensureClient(ctx)
+		if err != nil {
 			return err
 		}
-	}
-
-	entry.Enabled = true
-	if err := client.SaveServerRegistry(reg); err != nil {
+		defer client.Close()
+		_, err = client.Server.Enable(ctx, connect.NewRequest(&v1.EnableServerRequest{
+			VaultName: v,
+			Alias:     alias,
+		}))
 		return err
-	}
-
-	fmt.Fprintf(os.Stderr, "Enabled %q\n", alias)
-	return nil
+	})
 }
 
 func serverDisable(ctx context.Context, cmd *cli.Command) error {
 	alias := cmd.Args().First()
 	if alias == "" {
-		return fmt.Errorf("usage: server disable <alias>")
+		return fmt.Errorf("server disable: missing <alias>")
 	}
-
-	client, err := newGPGClient(ctx)
-	if err != nil {
-		return err
-	}
-
-	reg, err := client.LoadServerRegistry()
-	if err != nil {
-		return err
-	}
-
-	entry := reg.FindByAlias(alias)
-	if entry == nil {
-		return fmt.Errorf("server %q not found", alias)
-	}
-
-	entry.Enabled = false
-	if err := client.SaveServerRegistry(reg); err != nil {
-		return err
-	}
-
-	fmt.Fprintf(os.Stderr, "Disabled %q\n", alias)
-	return nil
-}
-
-// validateGitHubAccess checks that the gh CLI is installed, authenticated,
-// and has the required OAuth scopes for GPG and SSH key management.
-func validateGitHubAccess(ctx context.Context) error {
-	ghPath, err := exec.LookPath("gh")
-	if err != nil {
-		return fmt.Errorf("gh CLI not found; install it from https://cli.github.com")
-	}
-
-	out, err := exec.CommandContext(ctx, ghPath, "auth", "status").CombinedOutput() //nolint:gosec // ghPath from LookPath
-	if err != nil {
-		return fmt.Errorf("gh is not authenticated; run: gh auth login")
-	}
-
-	output := string(out)
-	requiredScopes := []string{"admin:gpg_key", "admin:public_key"}
-	var missing []string
-
-	for _, scope := range requiredScopes {
-		if !strings.Contains(output, scope) {
-			missing = append(missing, scope)
+	return simpleServerCall(ctx, cmd, "disable", func(v string) error {
+		client, err := ensureClient(ctx)
+		if err != nil {
+			return err
 		}
-	}
-
-	if len(missing) > 0 {
-		fmt.Fprintln(os.Stderr, "GitHub publishing requires additional permissions. Run:")
-		fmt.Fprintf(os.Stderr, "\n  gh auth refresh -s %s\n\n", strings.Join(missing, " -s "))
-		return fmt.Errorf("missing GitHub OAuth scopes: %s", strings.Join(missing, ", "))
-	}
-
-	return nil
-}
-
-// enabledPublishTargets loads the server registry and returns publish targets
-// for all enabled servers. Used by card commands that auto-publish after key operations.
-func enabledPublishTargets(client *gpg.Client) ([]gpg.PublishTarget, error) {
-	reg, err := client.LoadServerRegistry()
-	if err != nil {
-		return nil, err
-	}
-	return gpg.ToPublishTargets(reg.EnabledServers()), nil
+		defer client.Close()
+		_, err = client.Server.Disable(ctx, connect.NewRequest(&v1.DisableServerRequest{
+			VaultName: v,
+			Alias:     alias,
+		}))
+		return err
+	})
 }
 
 func serverPublish(ctx context.Context, cmd *cli.Command) error {
-	client, err := newGPGClient(ctx)
+	client, err := ensureClient(ctx)
 	if err != nil {
-		return err
+		return fmt.Errorf("server publish: %w", err)
 	}
+	defer client.Close()
 
-	cfg, err := loadGPGConfig(ctx, client)
+	vaultName, err := resolveVaultName(ctx, client, cmd)
 	if err != nil {
-		return err
+		return fmt.Errorf("server publish: %w", err)
 	}
 
-	reg, err := client.LoadServerRegistry()
+	resp, err := client.Server.Publish(ctx, connect.NewRequest(&v1.PublishRequest{
+		VaultName: vaultName,
+		Aliases:   cmd.Args().Slice(),
+	}))
 	if err != nil {
-		return err
+		return fmt.Errorf("server publish: %w", err)
 	}
-
-	// Resolve which servers to publish to.
-	var servers []gpg.ServerEntry
-	if cmd.Args().Present() {
-		for _, alias := range cmd.Args().Slice() {
-			entry := reg.FindByAlias(alias)
-			if entry == nil {
-				return fmt.Errorf("unknown server %q (run 'server list' to see available targets)", alias)
-			}
-			servers = append(servers, *entry)
+	w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
+	_, _ = fmt.Fprintln(w, "ALIAS\tRESULT\tERROR")
+	for _, r := range resp.Msg.GetResults() {
+		result := "ok"
+		if !r.GetSuccess() {
+			result = "failed"
 		}
-	} else {
-		servers = reg.EnabledServers()
-		if len(servers) == 0 {
-			return fmt.Errorf("no servers enabled (run 'server enable <alias>' or 'server list')")
-		}
+		_, _ = fmt.Fprintf(w, "%s\t%s\t%s\n", r.GetAlias(), result, dash(r.GetError()))
 	}
-
-	targets := gpg.ToPublishTargets(servers)
-	results := client.Publish(ctx, cfg.MasterFP, targets)
-	logger := loggerFrom(ctx)
-
-	var firstErr error
-	for i, r := range results {
-		label := servers[i].Alias
-		if r.Err != nil {
-			logger.ErrorContext(ctx, "publish failed",
-				slog.String("target", label),
-				slog.String("error", r.Err.Error()),
-			)
-			if firstErr == nil {
-				firstErr = r.Err
-			}
-		} else {
-			logger.InfoContext(ctx, "published",
-				slog.String("target", label),
-			)
-		}
-	}
-
-	// Audit successful publishes.
-	var published []string
-	for i, r := range results {
-		if r.Err == nil {
-			published = append(published, servers[i].Alias)
-		}
-	}
-	if len(published) > 0 {
-		_ = audit.Append(client.HomeDir(), audit.Entry{
-			Action:  "publish",
-			Details: fmt.Sprintf("published to %s", strings.Join(published, ", ")),
-		})
-	}
-
-	return firstErr
+	return w.Flush()
 }
 
-func serverLookup(ctx context.Context, _ *cli.Command) error {
-	client, err := newGPGClient(ctx)
+func serverLookup(ctx context.Context, cmd *cli.Command) error {
+	client, err := ensureClient(ctx)
 	if err != nil {
-		return err
+		return fmt.Errorf("server lookup: %w", err)
 	}
+	defer client.Close()
 
-	cfg, err := loadGPGConfig(ctx, client)
+	vaultName, err := resolveVaultName(ctx, client, cmd)
 	if err != nil {
-		return err
+		return fmt.Errorf("server lookup: %w", err)
 	}
 
-	reg, err := client.LoadServerRegistry()
+	resp, err := client.Server.Lookup(ctx, connect.NewRequest(&v1.LookupRequest{VaultName: vaultName}))
 	if err != nil {
-		return err
+		return fmt.Errorf("server lookup: %w", err)
 	}
-
-	// Use all keyserver URLs from the registry (enabled + disabled).
-	servers := reg.AllServerURLs()
-
-	// Check if any server is github type.
-	hasGitHub := false
-	for i := range reg.Servers {
-		if reg.Servers[i].Type == gpg.TargetTypeGitHub {
-			hasGitHub = true
-			break
-		}
-	}
-
-	extra := ""
-	if hasGitHub {
-		extra = " + GitHub"
-	}
-	fmt.Fprintf(os.Stderr, "Looking up %s on %d keyservers%s...\n", cfg.MasterFP, len(servers), extra)
-
-	results := client.LookupKeyservers(ctx, cfg.MasterFP, servers)
-
 	w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
-	_, _ = fmt.Fprintln(w, "TARGET\tSTATUS")
-	for _, r := range results {
-		status := "found"
-		if !r.Found {
-			if r.Err != nil && strings.Contains(r.Err.Error(), "context deadline exceeded") {
-				status = "timeout"
-			} else {
-				status = "not found"
-			}
-		}
-		_, _ = fmt.Fprintf(w, "%s\t%s\n", r.URL, status)
+	_, _ = fmt.Fprintln(w, "URL\tSTATUS")
+	for _, r := range resp.Msg.GetResults() {
+		_, _ = fmt.Fprintf(w, "%s\t%s\n", r.GetUrl(), dash(r.GetStatus()))
 	}
-
-	// Also check GitHub if in registry.
-	if hasGitHub {
-		ghResult := client.LookupGitHub(ctx, cfg.MasterFP)
-		ghStatus := "found"
-		if !ghResult.Found {
-			if ghResult.Err != nil {
-				ghStatus = ghResult.Err.Error()
-			} else {
-				ghStatus = "not found"
-			}
-		}
-		_, _ = fmt.Fprintf(w, "%s\t%s\n", "github", ghStatus)
-	}
-
 	return w.Flush()
+}
+
+// simpleServerCall is a tiny shared helper that resolves the vault name
+// and calls the supplied fn, wrapping errors with the operation label.
+func simpleServerCall(ctx context.Context, cmd *cli.Command, label string, fn func(vault string) error) error {
+	client, err := ensureClient(ctx)
+	if err != nil {
+		return fmt.Errorf("server %s: %w", label, err)
+	}
+	defer client.Close()
+
+	vaultName, err := resolveVaultName(ctx, client, cmd)
+	if err != nil {
+		return fmt.Errorf("server %s: %w", label, err)
+	}
+	if err := fn(vaultName); err != nil {
+		return fmt.Errorf("server %s: %w", label, err)
+	}
+	return nil
 }

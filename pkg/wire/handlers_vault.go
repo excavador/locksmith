@@ -95,6 +95,17 @@ func (h *vaultHandler) Snapshots(ctx context.Context, req *connect.Request[v1.Sn
 	}), nil
 }
 
+func (h *vaultHandler) Create(ctx context.Context, req *connect.Request[v1.CreateVaultRequest]) (*connect.Response[v1.CreateVaultResponse], error) {
+	snap, info, err := h.backend.CreateVault(ctx, req.Msg.Name, req.Msg.Path, req.Msg.Passphrase)
+	if err != nil {
+		return nil, connectErr(err)
+	}
+	return connect.NewResponse(&v1.CreateVaultResponse{
+		Snapshot: toProtoSnapshot(snap),
+		Session:  toProtoSessionInfo(info),
+	}), nil
+}
+
 func (h *vaultHandler) Import(ctx context.Context, req *connect.Request[v1.ImportRequest]) (*connect.Response[v1.ImportResponse], error) {
 	snap, err := h.backend.ImportVault(ctx, req.Msg.SourcePath, req.Msg.Passphrase, req.Msg.TargetVaultName)
 	if err != nil {

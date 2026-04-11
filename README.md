@@ -41,8 +41,9 @@ revocations with `card revoke`.
 **New workstation** -- open the vault (synced via Dropbox), export SSH public
 key, done.
 
-**Scripted automation** -- `eval $(gpgsmith vault open)` for CI or cron-style
-workflows, following the ssh-agent pattern.
+**Scripted automation** -- start the daemon once (`gpgsmith daemon start`),
+open the vault (`gpgsmith vault open work`), then run any number of
+`gpgsmith <noun> <verb>` commands against the daemon-held session.
 
 ## Prerequisites
 
@@ -79,154 +80,136 @@ goreleaser on every tagged version.
 
 ## Quick Start
 
-### 1a. First-time setup (new keys) -- recommended
+gpgsmith runs as a background daemon that holds open vaults in memory.
+Every CLI command talks to the daemon over a per-user Unix socket, so
+commands that follow a `vault open` are sub-millisecond RPCs.
+
+### 1. First-time setup (new keys) -- recommended
 
 ```bash
-# All-in-one wizard: creates vault, generates master key + subkeys, opens session
+# All-in-one wizard: creates registry entry, writes vault, generates keys.
 gpgsmith setup --name "Your Name" --email "you@example.com"
 
-# Inside the gpgsmith shell:
-gpgsmith keys list                  # verify your new keys
-gpgsmith card provision green --description "on keychain"  # optional: provision a YubiKey
-exit                                # prompts to seal or discard
+gpgsmith keys status                            # verify your new keys
+gpgsmith card provision green --description "on keychain"  # optional
+gpgsmith vault seal --message "initial setup"   # save the new snapshot
 ```
 
-### 1b. Create a vault and import existing keys
+### 2. Open and work with a vault
 
 ```bash
-# Create a new vault (prompts for passphrase, opens a session)
-gpgsmith vault create
-
-# Or import an existing GNUPGHOME
-gpgsmith vault create
-gpgsmith vault import ~/.gnupg
+gpgsmith vault open work                        # prompts for passphrase
+gpgsmith keys list                              # against the open session
+gpgsmith card provision green
+gpgsmith vault seal --message "provisioned green"
 ```
 
-### 1c. Create a vault and generate keys manually
+The session lives in the daemon. You do not get a subshell, and
+`GNUPGHOME` is not exported into your shell environment.
+
+### 3. Import an existing GNUPGHOME
 
 ```bash
-gpgsmith vault create
-
-# Inside the gpgsmith shell:
-gpgsmith keys create --name "Your Name" --email "you@example.com"
-gpgsmith keys list                  # verify: 1 master (C) + 3 subkeys (S/E/A)
-exit                                # seal: "initial key creation"
+gpgsmith vault create work                      # creates registry entry + empty vault
+gpgsmith vault import ~/.gnupg --name work      # seals ~/.gnupg as a snapshot
 ```
 
-### 2. Open the vault
+### 4. Discover existing YubiKeys
 
 ```bash
-# Interactive: spawns a subshell with GNUPGHOME set
-gpgsmith vault open
-
-# Inside the gpgsmith shell:
-gpgsmith keys list
-gpgsmith card provision green --description "on keychain"
-gpg --list-keys                     # raw gpg works too
-exit                                # prompts to seal or discard
-```
-
-### 3. Discover existing YubiKeys
-
-```bash
-gpgsmith vault open
-gpgsmith card discover              # detect connected YubiKey, prompt for label
-# Label: green
-# Description: on keychain
-# Added "green" (19750652) to inventory.
-exit
-```
-
-### 4. Provision a YubiKey
-
-```bash
-gpgsmith vault open
-gpgsmith card provision green       # generate + to-card + publish + ssh-pubkey
-exit                                # seal: "provisioned green YubiKey"
+gpgsmith vault open work
+gpgsmith card discover                          # detect connected YubiKey
+gpgsmith vault seal --message "added card to inventory"
 ```
 
 ### 5. Rotate subkeys
 
 ```bash
-gpgsmith vault open
-gpgsmith card rotate green          # revoke old + generate new + to-card + publish + ssh
-exit                                # seal: "rotated subkeys 2026"
+gpgsmith vault open work
+gpgsmith card rotate green                      # revoke old + generate new + to-card + publish + ssh
+gpgsmith vault seal --message "rotated subkeys 2026"
 ```
 
 ### 6. Manage identities (add/revoke email, change primary)
 
 ```bash
-gpgsmith vault open
-gpgsmith keys identity list                                         # current UIDs on the master key
-gpgsmith keys identity add "Your Name <new@example.com>"            # attach a new identity
-gpgsmith keys identity primary 2                                    # promote by 1-based index
-gpgsmith keys identity revoke "Your Name <old@example.com>"         # revoke by exact match
-gpgsmith keys identity revoke 3                                     # or revoke by index
-exit                                                                # seal: "identity changes"
+gpgsmith vault open work
+gpgsmith keys identity list
+gpgsmith keys identity add "Your Name <new@example.com>"
+gpgsmith keys identity primary 2                 # 1-based index
+gpgsmith keys identity revoke "Your Name <old@example.com>"
+gpgsmith vault seal --message "identity changes"
 ```
 
 Every mutation is captured in the audit log and auto-republished to enabled servers.
 `keys uid` is kept as an alias for users who prefer GPG's terminology.
 
-### 7. Check inventory and audit log
+### 7. Check inventory, audit log, and daemon state
 
 ```bash
-gpgsmith vault open
-gpgsmith card inventory             # which cards, which keys
-gpgsmith audit show --last 10       # recent operations
-gpgsmith vault discard              # read-only, nothing to seal
+gpgsmith vault status                           # which vaults does the daemon hold?
+gpgsmith vault open work
+gpgsmith card inventory
+gpgsmith audit show --last 10
+gpgsmith vault discard                          # end session without sealing
+```
+
+### 8. Controlling the daemon explicitly
+
+```bash
+gpgsmith daemon status                          # is it running?
+gpgsmith daemon start                           # or let auto-spawn handle it
+gpgsmith daemon stop
+gpgsmith daemon restart
 ```
 
 ## CLI Reference
 
 ```
 gpgsmith
-├── setup                  first-time wizard: vault create + keys create + card provision
-├── vault                  manage encrypted vault
-│   ├── create             create a new vault
-│   ├── import <path>      import existing GNUPGHOME as first snapshot
-│   ├── open               decrypt latest snapshot and start session
-│   ├── seal <message>     save current session as new snapshot
-│   ├── discard            discard session without saving
-│   ├── list               list all snapshots
-│   ├── restore <ref>      restore a specific snapshot and start session
-│   └── config
-│       ├── show           show vault config
-│       └── set <k> <v>    set a vault config value
-├── keys                   GPG key operations (requires GNUPGHOME set via vault open)
-│   ├── create             generate new master key and subkeys
-│   ├── generate           add new S/E/A subkeys
-│   ├── to-card            move subkeys to YubiKey (--same-keys / --unique-keys)
-│   ├── list               list keys and subkeys
-│   ├── revoke <key-id>    revoke a specific subkey
-│   ├── export             export public key to local ~/.gnupg keyring
-│   ├── ssh-pubkey         export auth subkey as SSH public key (~/.ssh/)
-│   ├── status             show key and card info
-│   ├── identity           manage identities (name+email UIDs) on the master key
-│   │   ├── list           list identities (with creation + revocation dates)
-│   │   ├── add <id>       add a new identity (e.g. "Name <email@example.com>")
-│   │   ├── revoke <ref>   revoke an identity by exact match or 1-based index
-│   │   └── primary <ref>  set an identity as primary
-│   └── config
-│       ├── show           show GPG config (inside GNUPGHOME)
-│       └── set <k> <v>    set a GPG config value
-├── card                   high-level YubiKey workflows (requires GNUPGHOME set via vault open)
-│   ├── provision <label>  generate subkeys + to-card + publish + ssh-pubkey (--description, --same-keys / --unique-keys)
-│   ├── rotate <label>     revoke old + generate new + to-card + publish + ssh
-│   ├── revoke <label>     revoke all subkeys for a card + publish revocation
-│   ├── inventory          list all known YubiKeys
-│   └── discover           detect connected YubiKey and add to inventory
-├── server                 manage publish targets (keyservers and GitHub)
-│   ├── publish [alias...] publish public key to enabled servers (or specific aliases)
-│   ├── lookup             check which servers have your public key
-│   ├── list               list all publish targets
-│   ├── add <alias> <url>  add a custom keyserver
-│   ├── remove <alias>     remove a server from the registry
-│   ├── enable <alias>     enable a server for publishing
-│   └── disable <alias>    disable a server for publishing
+├── daemon                          manage the gpgsmith background daemon
+│   ├── start [--foreground]
+│   ├── stop [--timeout]
+│   ├── status
+│   └── restart
+├── setup                           first-time wizard: vault create + keys create
+├── vault                           manage encrypted vaults
+│   ├── list                        list all configured vaults from the registry
+│   ├── status                      show which vaults are open (+ recoverable ephemerals)
+│   ├── create <name>               create a new vault entry + empty initial snapshot
+│   ├── open <name>                 open a vault by name (passphrase prompt)
+│   ├── seal [<name>]               seal an open vault (auto if exactly one open)
+│   ├── discard [<name>]            discard an open vault without sealing
+│   ├── snapshots [<name>]          list canonical snapshots of a vault
+│   ├── import <path>               encrypt an existing GNUPGHOME as a new snapshot
+│   ├── export <name> <target>      decrypt the latest snapshot to a target dir
+│   └── trust <name> <fp>           update the TOFU trust anchor after a rotation
+├── keys                            GPG key operations (against the open session)
+│   ├── create                      generate new master key and subkeys
+│   ├── generate                    add new S/E/A subkeys
+│   ├── list                        list keys and subkeys
+│   ├── revoke <key-id>             revoke a specific subkey
+│   ├── export                      export public key to ~/.gnupg
+│   ├── ssh-pubkey                  export auth subkey as SSH public key
+│   ├── status                      show key and card info
+│   └── identity                    manage identities on the master key
+│       ├── list
+│       ├── add <id>
+│       ├── revoke <id-or-index>
+│       └── primary <id-or-index>
+├── card                            high-level YubiKey workflows
+│   ├── provision <label>           generate subkeys + to-card + publish + ssh-pubkey
+│   ├── rotate <label>              revoke old + generate new + to-card + publish + ssh
+│   ├── revoke <label>              revoke all subkeys for a card
+│   ├── inventory
+│   └── discover
+├── server                          manage publish targets
+│   ├── list, add, remove, enable, disable
+│   ├── publish [alias...]
+│   └── lookup
 ├── audit
-│   └── show               display audit entries (--last N)
-└── version                show version information
+│   └── show [--last N]
+└── version                         show version information
 ```
 
 `<label>` accepts a card label (e.g., "green") or serial number.
@@ -234,16 +217,15 @@ gpgsmith
 `keys` commands are low-level building blocks. `card` commands are high-level
 workflows that compose `keys` operations internally.
 
-All `keys` and `card` commands require `GNUPGHOME` to be set (via `vault open`).
-
-`vault create`, `vault import`, `vault open`, and `vault restore` all support
-`--no-interactive` to output env exports instead of spawning a shell.
+All session-bearing commands (`keys`, `card`, `server`, `audit`) operate on
+an open vault held by the daemon. When zero or two-plus vaults are open,
+pass `--vault <name>` on the root command.
 
 ### Global flags
 
 | Flag | Default | Description |
 |------|---------|-------------|
-| `--vault-dir` | from config | Override vault directory |
+| `--vault` | auto | Select which open vault to target when multiple are open |
 | `--verbose` | `false` | Debug logging to stderr |
 | `--dry-run` | `false` | Print commands without executing |
 
@@ -356,44 +338,27 @@ interrupt.
 
 gpgsmith follows the **ssh-agent pattern** for session management.
 
-### Interactive mode (default when TTY detected)
+### Daemon-backed sessions
 
-`vault open` (and `create`, `import`, `restore`) spawns `$SHELL` with
-`GNUPGHOME` set and a `(gpgsmith)` prompt prefix. The `GPGSMITH_SESSION=1`
-environment variable is also set, so you can customize your shell prompt in
-`.bashrc`/`.zshrc` based on it. On shell exit, prompts to seal or discard:
-
-```bash
-$ gpgsmith vault open
-Entering gpgsmith shell. GNUPGHOME is set.
-Run gpgsmith commands or raw gpg. Type 'exit' when done.
-
-gpgsmith$ gpgsmith card rotate green
-gpgsmith$ exit
-Seal vault? [Y/n/message]: rotated subkeys
-Sealed: 2026-04-01T153000Z_rotated-subkeys.tar.age
-```
-
-### Scripted mode (non-TTY or `--no-interactive`)
-
-Like `ssh-agent` -- outputs shell exports to stdout:
+Opening a vault hands the decrypted session to the background daemon,
+which holds it in memory across many client RPCs. The CLI does not
+spawn a subshell and does not export `GNUPGHOME` into your shell:
 
 ```bash
-eval $(gpgsmith vault open)              # export GNUPGHOME=...; export GPGSMITH_VAULT_KEY=...;
-gpgsmith card rotate green               # uses GNUPGHOME from env
-eval $(gpgsmith vault seal "rotated")    # unset GNUPGHOME; unset GPGSMITH_VAULT_KEY;
+$ gpgsmith vault open work
+Vault passphrase:
+opened work
+
+$ gpgsmith card rotate green            # runs against the daemon-held session
+$ gpgsmith vault seal --message "rotated subkeys"
+sealed work: 2026-04-01T153000Z_rotated-subkeys.tar.age
 ```
 
-`GPGSMITH_VAULT_KEY` is exported so that subsequent vault commands in the same
-scripted session skip the passphrase prompt.
-
-### TTY detection
-
-| Condition | Behavior |
-|-----------|----------|
-| TTY, no flag | Interactive (subshell) |
-| TTY + `--no-interactive` | Scripted (env export) |
-| No TTY | Scripted (env export) |
+If the daemon is not already running, any CLI command auto-spawns it
+as a detached child, so explicit `gpgsmith daemon start` is optional.
+After 5 minutes of idle time the daemon flushes the session to the
+encrypted ephemeral file pair on disk; the next `vault open` on the
+same vault offers to resume or discard.
 
 ## Configuration
 
