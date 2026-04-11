@@ -1257,7 +1257,17 @@ func (d *Daemon) KeyStatus(ctx context.Context, token string) ([]gpg.SubKey, *gp
 	if err != nil {
 		return nil, nil, err
 	}
-	info, _ := client.CardStatus(ctx)
+	// Live card status is optional — if scdaemon can't acquire the
+	// card (e.g. another gpg-agent holds it despite our retry), we
+	// return the keys anyway so the caller can still render them.
+	// The failure is logged so operators can diagnose "no card
+	// detected" showing up unexpectedly.
+	info, cardErr := client.CardStatus(ctx)
+	if cardErr != nil {
+		d.logger.DebugContext(ctx, "key status: live card-status call failed (keys list still returned)",
+			slog.String("error", cardErr.Error()),
+		)
+	}
 	return keys, info, nil
 }
 

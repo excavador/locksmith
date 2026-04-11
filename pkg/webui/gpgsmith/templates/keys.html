@@ -32,15 +32,45 @@
 </table>
 {{- end}}
 
-<h2>Card (from KeyService.Status)</h2>
-{{- if .Keys.CardSerial}}
-<p>
-    <strong>Label:</strong> {{template "dash" .Keys.CardLabel}} &nbsp;
-    <strong>Serial:</strong> <span class="mono">{{.Keys.CardSerial}}</span> &nbsp;
-    <strong>Model:</strong> {{template "dash" .Keys.CardModel}}
+<h2>YubiKeys linked to this vault</h2>
+{{- if .Keys.Cards}}
+<table>
+    <thead>
+        <tr>
+            <th>Label</th>
+            <th>Serial</th>
+            <th>Model</th>
+            <th>Status</th>
+            <th>Currently plugged in</th>
+        </tr>
+    </thead>
+    <tbody>
+        {{- range .Keys.Cards}}
+        <tr>
+            <td>{{template "dash" .Label}}</td>
+            <td class="mono">{{.Serial}}</td>
+            <td>{{template "dash" .Model}}</td>
+            <td>{{template "dash" .Status}}</td>
+            <td>{{if .CurrentlyLive}}<strong>yes</strong>{{else}}<span class="muted">no</span>{{end}}</td>
+        </tr>
+        {{- end}}
+    </tbody>
+</table>
+{{- if not .Keys.LiveCardSerial}}
+<p class="muted">
+    No card is currently reachable via <code>gpg --card-status</code>.
+    The inventory above is from <code>gpgsmith-inventory.yaml</code>; all
+    registered YubiKeys are shown regardless of whether one is plugged
+    in right now.
+    {{- if .Keys.LiveCardError}}<br>Reason: {{.Keys.LiveCardError}}{{end}}
 </p>
+{{- end}}
 {{- else}}
-<p class="empty">No card detected.</p>
+<p class="empty">
+    No YubiKeys registered in this vault's inventory yet.
+    Run <code>gpgsmith card discover</code> from the CLI (or add a
+    card via <code>gpgsmith card provision &lt;label&gt;</code>).
+</p>
 {{- end}}
 {{template "footer" .}}
 {{end}}

@@ -2,6 +2,32 @@
 
 ## Unreleased
 
+## v0.5.3 - 2026-04-11
+
+### Fixed
+
+- **Web UI keys page "No card detected" when scdaemon conflicts.**
+  The "Card (from KeyService.Status)" section silently showed "No card
+  detected" whenever the daemon's live `gpg --card-status` call failed
+  (for example when another scdaemon on the same host held the
+  YubiKey despite the v0.4.0-era retry, which can happen after
+  several daemon restarts leave stale scdaemons around). The webui
+  now falls back to `CardService.Inventory` — the same static
+  `gpgsmith-inventory.yaml` the `Cards` tab shows — and renders every
+  registered YubiKey with a "currently plugged in" badge derived
+  from the live call's response. When the live call returned no
+  card, a muted diagnostic is shown under the table explaining that
+  the inventory is static and why the live status might be
+  unavailable. The section is renamed to "YubiKeys linked to this
+  vault" to reflect that it is now inventory-backed.
+- **Daemon swallowed live card-status errors silently.**
+  `daemon.KeyStatus` used `info, _ := client.CardStatus(ctx)` and
+  returned `(keys, nil)` with no indication of what went wrong. It
+  now logs the card-status error at DEBUG level so operators can
+  diagnose unexpected "no card detected" states without attaching
+  a debugger. Behavior is unchanged: the keys list is still
+  returned even when the live card call fails.
+
 ## v0.5.2 - 2026-04-11
 
 ### Fixed

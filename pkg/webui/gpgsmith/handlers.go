@@ -50,10 +50,28 @@ type (
 	}
 
 	keysView struct {
-		Keys       []keyRow
-		CardSerial string
-		CardModel  string
-		CardLabel  string
+		Keys []keyRow
+
+		// Cards is the inventory entries for YubiKeys linked to this
+		// vault (always available — read from gpgsmith-inventory.yaml).
+		Cards []keysCardRow
+
+		// LiveCardError is the error message from the live
+		// `gpg --card-status` call, if any. Empty when the call
+		// succeeded or no card is plugged in.
+		LiveCardError string
+
+		// LiveCardSerial is the serial of the card that gpg is
+		// currently talking to, if any. Used to mark which inventory
+		// row is "currently plugged in".
+		LiveCardSerial string
+	}
+	keysCardRow struct {
+		Serial        string
+		Label         string
+		Model         string
+		Status        string
+		CurrentlyLive bool
 	}
 	keyRow struct {
 		KeyID      string
@@ -471,11 +489,36 @@ func (s *Server) handleKeys(w http.ResponseWriter, r *http.Request) {
 			CardSerial: k.GetCardSerial(),
 		})
 	}
+	// Live gpg --card-status: capture the serial of whatever card gpg
+	// is currently talking to, so we can highlight it in the inventory
+	// below. A nil Card is NOT an error — it just means no card is
+	// currently plugged in OR scdaemon could not acquire it.
 	if card := statusResp.GetCard(); card != nil {
-		kv.CardSerial = card.GetSerial()
-		kv.CardModel = card.GetModel()
-		kv.CardLabel = card.GetLabel()
+		kv.LiveCardSerial = card.GetSerial()
 	}
+
+	// Always fall back to the static inventory so the user sees their
+	// registered YubiKeys even when the live gpg call fails or returns
+	// nothing. This is the same data `gpgsmith card inventory` shows.
+	invResp, invErr := s.client.CardInventory(r.Context(), tab.daemonToken)
+	if invErr != nil {
+		kv.LiveCardError = "live card status: " + invErr.Error()
+		s.logger.WarnContext(r.Context(), "webui: card inventory failed",
+			slog.String("error", invErr.Error()),
+		)
+	} else {
+		for _, c := range invResp.GetCards() {
+			serial := c.GetSerial()
+			kv.Cards = append(kv.Cards, keysCardRow{
+				Serial:        serial,
+				Label:         c.GetLabel(),
+				Model:         c.GetModel(),
+				Status:        c.GetStatus(),
+				CurrentlyLive: serial != "" && serial == kv.LiveCardSerial,
+			})
+		}
+	}
+
 	view.Keys = kv
 	s.render(w, r, "keys", view)
 }
