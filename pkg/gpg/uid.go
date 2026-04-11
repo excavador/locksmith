@@ -47,15 +47,27 @@ func (c *Client) ListUIDs(ctx context.Context, masterFP string) ([]UID, error) {
 //
 //	0: "uid"
 //	1: validity
-//	5: creation date (epoch seconds; empty for revoked UIDs)
+//	5: creation date (epoch seconds; empty for revoked UIDs; LATEST self-sig
+//	   date for active UIDs after a primary toggle, NOT the original
+//	   creation date)
 //	6: expiration date (epoch seconds, may be empty)
 //	7: uid hash (40 hex chars)
 //	9: User ID string ("Name <email>")
 //
-// For revoked UIDs, the creation date is recovered from the trailing
-// self-signature record (sig:, field 5), and the revocation date is taken
-// from the companion rev: record (rev:, field 5). Records belonging to a
-// uid are bounded by the next uid:/pub:/sub:/sec:/ssb: record.
+// Field 5 of the uid record reflects the LATEST self-signature, which gpg
+// refreshes whenever the UID is touched (e.g. --quick-set-primary-uid
+// rewrites the binding signature with today's timestamp). Naively trusting
+// field 5 makes a UID created in 2022 look like it was created today right
+// after a primary-toggle.
+//
+// To recover the actual creation date, we walk all sig: records that follow
+// each uid: record and pick the EARLIEST one — that's the original binding
+// signature from when the UID was first added. The earliest sig is also
+// what we want for revoked UIDs (where field 5 is empty entirely).
+//
+// The revocation date comes from the companion rev: record (rev:, field 5).
+// Records belonging to a uid are bounded by the next
+// uid:/pub:/sub:/sec:/ssb: record.
 func parseUIDs(output string) []UID {
 	var uids []UID
 	var current *UID
@@ -77,23 +89,33 @@ func parseUIDs(output string) []UID {
 				Hash:     fields[7],
 				UID:      fields[9],
 			}
-			if fields[5] != "" {
-				u.Created = parseEpoch(fields[5])
-			}
+			// Note: we deliberately do NOT trust field 5 of the uid record
+			// here. It reflects the latest self-signature, which gpg
+			// refreshes on operations like --quick-set-primary-uid. The
+			// earliest sig: record below is the authoritative origin date.
 			uids = append(uids, u)
 			current = &uids[len(uids)-1]
 
 		case recSig:
-			// Self-sig date — fills in Created when the uid record itself
-			// did not carry one (typical for revoked UIDs).
-			if current != nil && current.Created.IsZero() && len(fields) > 5 && fields[5] != "" {
-				current.Created = parseEpoch(fields[5])
+			// Self-sig date. Track the EARLIEST one as the original
+			// creation timestamp; later sig records on the same UID
+			// represent re-signings (e.g. primary toggles, expiration
+			// extensions, key updates) which we don't want to surface.
+			if current != nil && len(fields) > 5 && fields[5] != "" {
+				sigAt := parseEpoch(fields[5])
+				if current.Created.IsZero() || sigAt.Before(current.Created) {
+					current.Created = sigAt
+				}
 			}
 
 		case recRev:
-			// Revocation signature date.
-			if current != nil && current.Revoked.IsZero() && len(fields) > 5 && fields[5] != "" {
-				current.Revoked = parseEpoch(fields[5])
+			// Revocation signature date. Use the earliest revocation, in
+			// the (very unusual) case that there's more than one.
+			if current != nil && len(fields) > 5 && fields[5] != "" {
+				revAt := parseEpoch(fields[5])
+				if current.Revoked.IsZero() || revAt.Before(current.Revoked) {
+					current.Revoked = revAt
+				}
 			}
 
 		case recPub, recSub, recSec, recSsb:

@@ -50,6 +50,47 @@ func TestParseUIDs(t *testing.T) {
 	}
 }
 
+// TestParseUIDsPrimaryTogglePrefersOriginalDate verifies that after a
+// `--quick-set-primary-uid` operation (which adds a fresh self-signature
+// with today's timestamp), the parser still reports the ORIGINAL creation
+// date — not the date of the most recent re-signing. This was a real bug
+// surfaced during v0.4.0 manual testing: setting an old UID as primary
+// caused its CREATED column to jump from 2022 to today.
+//
+// Field 5 of the uid record reflects the latest self-signature, so the
+// parser must always walk sig: records and pick the earliest one.
+func TestParseUIDsPrimaryTogglePrefersOriginalDate(t *testing.T) {
+	data, err := os.ReadFile("../../testdata/list-sigs-primary-toggle.txt")
+	if err != nil {
+		t.Fatalf("read testdata: %v", err)
+	}
+
+	uids := parseUIDs(string(data))
+
+	if len(uids) != 2 {
+		t.Fatalf("expected 2 uids, got %d", len(uids))
+	}
+
+	promoted := uids[0]
+	original := uids[1]
+
+	if promoted.UID != "Promoted Primary <primary@example.com>" {
+		t.Errorf("promoted.UID = %q", promoted.UID)
+	}
+	// The promoted UID has TWO sig records: the original from 1659571200
+	// (2022-08-04) and a fresh re-sign from 1775826361 (2026-04-10).
+	// Field 5 of the uid record holds the latest (1775826361). The parser
+	// must prefer the earliest sig (1659571200).
+	if promoted.Created.Unix() != 1659571200 {
+		t.Errorf("promoted.Created = %d, want 1659571200 (the original sig date, not the latest re-sign)",
+			promoted.Created.Unix())
+	}
+
+	if original.Created.Unix() != 1659571200 {
+		t.Errorf("original.Created = %d, want 1659571200", original.Created.Unix())
+	}
+}
+
 // TestParseUIDsRevokedRecoversDates verifies the parser can recover the
 // creation date from the trailing self-sig record and the revocation date
 // from the rev record, even when gpg's colon output omits the creation

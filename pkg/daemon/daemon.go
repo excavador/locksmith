@@ -203,15 +203,6 @@ func (d *Daemon) sessionInfoLocked(name string, se *sessionEntry) wire.SessionIn
 	return info
 }
 
-func (d *Daemon) touch(se *sessionEntry) {
-	se.mu.Lock()
-	se.lastActiveAt = time.Now().UTC()
-	if se.idleTimer != nil {
-		se.idleTimer.Reset(d.idleTimeout)
-	}
-	se.mu.Unlock()
-}
-
 func (d *Daemon) startIdleTimer(name string, se *sessionEntry) {
 	se.mu.Lock()
 	defer se.mu.Unlock()
@@ -387,21 +378,56 @@ func (d *Daemon) ListSessions(_ context.Context) ([]wire.SessionInfo, error) {
 // ===== VaultService =====
 
 // ListVaults implements wire.Backend.
+//
+// Deduplicates against the legacy single-vault form: if cfg.VaultDir is
+// set AND a registry entry already covers the same name (typically
+// "default") OR the same physical path, the legacy entry is suppressed.
+// This avoids the user seeing two rows for the same vault when their
+// config carries both `vault_dir:` and an explicit `vaults:` entry — a
+// state that occurs naturally after TOFU first-use writes the registry
+// entry without removing the legacy field.
 func (d *Daemon) ListVaults(_ context.Context) ([]vault.Entry, string, error) {
 	cfg, err := d.loadConfig()
 	if err != nil {
 		return nil, "", err
 	}
-	out := make([]vault.Entry, 0, len(cfg.Vaults)+1)
-	out = append(out, cfg.Vaults...)
-	if cfg.VaultDir != "" {
-		out = append(out, vault.Entry{
-			Name:     vault.LegacyDefaultName,
-			Path:     cfg.VaultDir,
-			Identity: cfg.Identity,
-		})
-	}
+	out := mergeVaultEntries(cfg)
 	return out, cfg.Default, nil
+}
+
+// mergeVaultEntries returns the merged registry+legacy entries with
+// duplicates removed. Registry entries (cfg.Vaults) are authoritative;
+// the legacy `vault_dir:` synthesizes a "default" entry only when no
+// registry entry already covers it.
+func mergeVaultEntries(cfg *vault.Config) []vault.Entry {
+	out := make([]vault.Entry, 0, len(cfg.Vaults)+1)
+	seenNames := make(map[string]struct{}, len(cfg.Vaults)+1)
+	seenPaths := make(map[string]struct{}, len(cfg.Vaults)+1)
+
+	for _, e := range cfg.Vaults {
+		if _, ok := seenNames[e.Name]; ok {
+			continue
+		}
+		seenNames[e.Name] = struct{}{}
+		if e.Path != "" {
+			seenPaths[e.Path] = struct{}{}
+		}
+		out = append(out, e)
+	}
+
+	if cfg.VaultDir != "" {
+		_, nameTaken := seenNames[vault.LegacyDefaultName]
+		_, pathTaken := seenPaths[cfg.VaultDir]
+		if !nameTaken && !pathTaken {
+			out = append(out, vault.Entry{
+				Name:     vault.LegacyDefaultName,
+				Path:     cfg.VaultDir,
+				Identity: cfg.Identity,
+			})
+		}
+	}
+
+	return out
 }
 
 // StatusVaults implements wire.Backend. Returns currently-open sessions
@@ -428,21 +454,15 @@ func (d *Daemon) StatusVaults(_ context.Context) ([]wire.SessionInfo, []wire.Res
 	}
 
 	var recoverable []wire.ResumeOption
-	scan := func(entry vault.Entry) {
+	for _, entry := range mergeVaultEntries(cfg) {
 		if _, ok := openSet[entry.Name]; ok {
-			return
+			continue
 		}
 		eph, _ := gpgsmith.FindEphemeralFor(entry.Path, hostname)
 		if eph == nil {
-			return
+			continue
 		}
 		recoverable = append(recoverable, ephToResumeOption(eph))
-	}
-	for _, e := range cfg.Vaults {
-		scan(e)
-	}
-	if cfg.VaultDir != "" {
-		scan(vault.Entry{Name: vault.LegacyDefaultName, Path: cfg.VaultDir})
 	}
 
 	return open, recoverable, nil
@@ -715,14 +735,26 @@ func (d *Daemon) DiscardVault(ctx context.Context, name string) error {
 
 // Snapshots implements wire.Backend.
 func (d *Daemon) Snapshots(ctx context.Context, name string) ([]vault.Snapshot, error) {
-	se, err := d.lookupSession(name)
+	// Snapshots is a stateless directory listing — no session needed.
+	// If a session happens to be open for this vault, we still don't
+	// touch it; we just resolve the entry from config and read the
+	// vault directory directly. This lets the user see what canonical
+	// snapshots exist without having to enter their passphrase.
+	cfg, err := d.loadConfig()
 	if err != nil {
 		return nil, err
 	}
-	d.touch(se)
-	se.mu.Lock()
-	v := se.session.Vault
-	se.mu.Unlock()
+	entry, err := cfg.Resolve(name)
+	if err != nil {
+		return nil, fmt.Errorf("snapshots: resolve vault: %w", err)
+	}
+
+	// Build a Vault without a passphrase or identity. List() only reads
+	// directory entries and parses filenames; it never decrypts.
+	v, err := vault.New(entry.ToConfig(), d.logger)
+	if err != nil {
+		return nil, fmt.Errorf("snapshots: %w", err)
+	}
 	return v.List(ctx)
 }
 

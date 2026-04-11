@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"sync"
 	"sync/atomic"
@@ -307,8 +308,9 @@ func (s *Session) Generation() uint64 {
 }
 
 // Seal explicitly writes the workdir as a new canonical snapshot, deletes
-// the ephemeral file pair, stops the heartbeat goroutine, and frees all
-// in-memory state. After Seal returns, the Session is unusable.
+// the ephemeral file pair, stops the heartbeat goroutine, kills the
+// per-session gpg-agent and scdaemon, and frees all in-memory state.
+// After Seal returns, the Session is unusable.
 func (s *Session) Seal(ctx context.Context, message string) (*vault.Snapshot, error) {
 	s.mu.Lock()
 	if s.closed {
@@ -322,8 +324,12 @@ func (s *Session) Seal(ctx context.Context, message string) (*vault.Snapshot, er
 
 	snap, err := s.Vault.Seal(ctx, s.Workdir, message)
 	if err != nil {
+		// Best-effort kill so we don't leave orphans even when seal fails.
+		s.killSessionAgents(ctx)
 		return nil, fmt.Errorf("seal session: %w", err)
 	}
+
+	s.killSessionAgents(ctx)
 
 	if cleanupErr := DeleteEphemeralFiles(s.ephemeralStatePath, s.ephemeralInfoPath); cleanupErr != nil {
 		s.Logger.WarnContext(ctx, "seal session: ephemeral cleanup failed",
@@ -340,7 +346,9 @@ func (s *Session) Seal(ctx context.Context, message string) (*vault.Snapshot, er
 }
 
 // Discard explicitly throws away the workdir and the ephemeral file pair
-// without writing a new canonical snapshot. After Discard returns, the
+// without writing a new canonical snapshot. The per-session gpg-agent and
+// scdaemon are killed before the workdir is removed so they don't become
+// orphans pointing at a non-existent directory. After Discard returns, the
 // Session is unusable.
 func (s *Session) Discard(ctx context.Context) error {
 	s.mu.Lock()
@@ -352,6 +360,8 @@ func (s *Session) Discard(ctx context.Context) error {
 	s.mu.Unlock()
 
 	s.stopHeartbeat()
+
+	s.killSessionAgents(ctx)
 
 	if cleanupErr := DeleteEphemeralFiles(s.ephemeralStatePath, s.ephemeralInfoPath); cleanupErr != nil {
 		s.Logger.WarnContext(ctx, "discard session: ephemeral cleanup failed",
@@ -404,6 +414,11 @@ func (s *Session) AutoSealAndDrop(ctx context.Context) error {
 
 	s.stopHeartbeat()
 
+	// Kill the per-session gpg-agent and scdaemon BEFORE removing the
+	// workdir, so they don't become orphans pointing at a non-existent
+	// directory.
+	s.killSessionAgents(ctx)
+
 	// Remove the in-memory workdir; the encrypted state lives on disk now.
 	if err := s.Vault.Discard(ctx, s.Workdir); err != nil {
 		return fmt.Errorf("auto seal: drop workdir: %w", err)
@@ -414,6 +429,32 @@ func (s *Session) AutoSealAndDrop(ctx context.Context) error {
 		slog.String("ephemeral", filepath.Base(s.ephemeralStatePath)),
 	)
 	return nil
+}
+
+// killSessionAgents runs `gpgconf --homedir <workdir> --kill all` to
+// terminate the per-session gpg-agent, scdaemon, and dirmngr that gpg may
+// have spawned for this session's workdir. Without this, every Seal /
+// Discard / AutoSealAndDrop leaks a gpg-agent + scdaemon pair that
+// continues to run pointing at a workdir we're about to delete from
+// /dev/shm — they accumulate and eventually clutter the user's process
+// table.
+//
+// Best-effort: errors are logged but never returned. If gpgconf isn't on
+// PATH or the homedir has no agent running, the call is a harmless no-op.
+func (s *Session) killSessionAgents(ctx context.Context) {
+	if s.Workdir == "" {
+		return
+	}
+	// gpgconf is on the user's PATH from devbox/system; the homedir arg is
+	// the daemon-managed workdir under /dev/shm (always validated by
+	// vault.SecureTmpDir / vault.validateWorkdir before being assigned).
+	cmd := exec.CommandContext(ctx, "gpgconf", "--homedir", s.Workdir, "--kill", "all") //nolint:gosec // homedir from validated SecureTmpDir, gpgconf from PATH
+	if err := cmd.Run(); err != nil {
+		s.Logger.DebugContext(ctx, "kill session agents failed (best-effort)",
+			slog.String("workdir", s.Workdir),
+			slog.String("error", err.Error()),
+		)
+	}
 }
 
 // IsClosed reports whether the Session has been ended via Seal, Discard,
