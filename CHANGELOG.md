@@ -2,6 +2,53 @@
 
 ## Unreleased
 
+## v0.5.2 - 2026-04-11
+
+### Fixed
+
+- **CLI `vault open --resume` crash on orphan `.info` sidecars.** The
+  daemon's `OpenVault` flow found any `.session-<host>.info` sidecar on
+  disk and eagerly returned `ResumeAvailable`, even when the companion
+  encrypted state file was missing. Sessions that were started but
+  never flushed any mutations (so no state file was ever written), or
+  that were killed before `AutoSealAndDrop` could run, left behind
+  orphan `.info` files that looked like resume candidates. The user
+  answered "Resume? Y" to the CLI prompt and the daemon crashed with
+  `resume session: ephemeral has no state file on disk`. Fix: the new
+  `isRecoverable` helper requires both the `.info` and the state file
+  to be on disk. `OpenVault` and `StatusVaults` both use it now.
+  Orphaned `.info` files are logged as warnings and ignored; the next
+  session opened against the same vault overwrites them with its own
+  heartbeat. Regression tests `TestDaemonOpenIgnoresOrphanInfo` and
+  `TestDaemonStatusIgnoresOrphanInfo` added in `pkg/daemon/daemon_test.go`.
+- **`ResumeSession` error message** when a caller somehow still reaches
+  it with a state-file-less ephemeral now explains the likely cause
+  (session killed before flushing) and the remediation (discard the
+  orphan, or retry `vault open` to overwrite it).
+
+- **Web UI keys page missing card label.** The `KeyService.Status`
+  response includes the card's `label` field, but the web UI's
+  `keysView` only propagated `serial` and `model`. The
+  `[label][model][serial]` line on `/vault/<name>/keys` now shows all
+  three, matching the CLI's `keys status` output.
+
+### Added
+
+- **Web UI resume flow.** Previously, a POST to `/vault/<name>/open`
+  that returned a `ResumeAvailable` response redirected to the
+  dashboard with a flash alert telling the user to "resume from the
+  CLI." The web UI now renders a proper resume prompt page at
+  `GET /vault/<name>/resume` with Resume / Discard / Cancel buttons
+  and a summary of the ephemeral (hostname, started-at, last
+  heartbeat, status, divergent flag). The user's typed passphrase is
+  stashed in the tab's in-memory state (loopback-only, never written
+  to disk or sent to the browser) for the follow-up call, so they do
+  not have to retype it. New `DaemonClient.VaultResume` method on the
+  web UI's narrow interface, new `wireAdapter.VaultResume`
+  implementation, and tests `TestVaultOpen_ResumeAvailable_RedirectsToResumePrompt`
+  and `TestVaultResume_POSTCallsDaemonAndBinds` in
+  `pkg/webui/gpgsmith/webui_test.go`.
+
 ## v0.5.1 - 2026-04-11
 
 ### Fixed

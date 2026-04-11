@@ -1,0 +1,38 @@
+{{define "resume"}}
+{{template "header" .}}
+<h2>Recoverable session for <code>{{.Resume.VaultName}}</code></h2>
+
+<p>
+    The daemon found an encrypted ephemeral session file for this vault
+    on disk. You can either resume the in-progress state or discard it
+    and start fresh from the latest canonical snapshot.
+</p>
+
+<table>
+    <tbody>
+        <tr><th>Vault</th><td><code>{{.Resume.VaultName}}</code></td></tr>
+        <tr><th>Hostname</th><td>{{template "dash" .Resume.Hostname}}</td></tr>
+        <tr><th>Started</th><td>{{template "dash" .Resume.StartedAt}}</td></tr>
+        <tr><th>Last heartbeat</th><td>{{template "dash" .Resume.LastHeartbeat}}</td></tr>
+        <tr><th>Status</th><td>{{template "dash" .Resume.Status}}</td></tr>
+        <tr><th>Divergent</th><td>{{if .Resume.Divergent}}yes — newer canonicals exist{{else}}no{{end}}</td></tr>
+    </tbody>
+</table>
+
+<form method="post" action="/vault/{{.Resume.VaultName}}/resume" class="resume-actions">
+    <button type="submit" name="action" value="resume">Resume</button>
+    <button type="submit" name="action" value="discard" class="secondary">Discard and open fresh</button>
+    <button type="submit" name="action" value="cancel" class="secondary">Cancel</button>
+</form>
+
+<p class="muted">
+    <strong>Resume</strong> decrypts the ephemeral state file and continues
+    the session with any in-progress mutations intact.
+    <strong>Discard</strong> deletes the ephemeral file pair and opens a
+    fresh session from the latest canonical snapshot (any uncommitted
+    changes are lost).
+    <strong>Cancel</strong> leaves the ephemeral untouched and returns to
+    the dashboard.
+</p>
+{{template "footer" .}}
+{{end}}

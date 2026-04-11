@@ -19,10 +19,16 @@ type (
 	fakeClient struct {
 		vaults []*v1.VaultRegistryEntry
 
-		openToken    string // token returned by VaultOpen
-		openErr      error
-		discardToken string // last token passed to Discard
-		discardCalls int
+		openToken        string // token returned by VaultOpen
+		openResumeOption *v1.ResumeOption
+		openErr          error
+		discardToken     string // last token passed to Discard
+		discardCalls     int
+		resumeToken      string
+		resumeErr        error
+		resumeLastAction v1.ResumeRequest_Action
+		resumeLastPass   string
+		resumeLastVault  string
 
 		keyListToken string
 		keyListErr   error
@@ -41,7 +47,21 @@ func (f *fakeClient) VaultOpen(_ context.Context, _, _ string) (*v1.OpenResponse
 	if f.openErr != nil {
 		return nil, f.openErr
 	}
-	return &v1.OpenResponse{Token: f.openToken}, nil
+	return &v1.OpenResponse{Token: f.openToken, ResumeAvailable: f.openResumeOption}, nil
+}
+
+func (f *fakeClient) VaultResume(_ context.Context, vaultName, passphrase string, resume bool) (*v1.ResumeResponse, error) {
+	f.resumeLastVault = vaultName
+	f.resumeLastPass = passphrase
+	if resume {
+		f.resumeLastAction = v1.ResumeRequest_ACTION_RESUME
+	} else {
+		f.resumeLastAction = v1.ResumeRequest_ACTION_DISCARD
+	}
+	if f.resumeErr != nil {
+		return nil, f.resumeErr
+	}
+	return &v1.ResumeResponse{Token: f.resumeToken}, nil
 }
 
 func (f *fakeClient) VaultDiscard(_ context.Context, token string) error {
@@ -217,6 +237,91 @@ func TestVaultOpen_StoresTokenInTab(t *testing.T) {
 	}
 	if tab.vaultName != "work" {
 		t.Fatalf("want vaultName=work, got %q", tab.vaultName)
+	}
+}
+
+// TestVaultOpen_ResumeAvailable_RedirectsToResumePrompt verifies that
+// when the daemon reports a recoverable ephemeral, the web UI redirects
+// to the per-tab resume prompt page and stashes the passphrase on the
+// tab for the follow-up VaultResume call.
+func TestVaultOpen_ResumeAvailable_RedirectsToResumePrompt(t *testing.T) {
+	fake := &fakeClient{
+		vaults:           []*v1.VaultRegistryEntry{{Name: "work"}},
+		openResumeOption: &v1.ResumeOption{CanonicalBase: "snap.tar.age", Status: "idle-sealed"},
+	}
+	srv, ts := newTestServer(t, fake)
+	cookie := seedCookie(t, srv)
+
+	form := url.Values{}
+	form.Set("passphrase", "hunter2")
+	req, _ := http.NewRequestWithContext(context.Background(), http.MethodPost, ts.URL+"/vault/work/open", strings.NewReader(form.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.AddCookie(cookie)
+	resp, err := noRedirectClient().Do(req)
+	if err != nil {
+		t.Fatalf("POST open: %v", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusSeeOther {
+		t.Fatalf("want 303, got %d", resp.StatusCode)
+	}
+	if got := resp.Header.Get("Location"); got != "/vault/work/resume" {
+		t.Errorf("Location = %q, want /vault/work/resume", got)
+	}
+	tab := srv.tabs.get(cookie.Value)
+	if tab == nil || tab.pendingResume == nil {
+		t.Fatal("pending resume not stashed on tab")
+	}
+	if tab.pendingResume.vaultName != "work" {
+		t.Errorf("pendingResume.vaultName = %q", tab.pendingResume.vaultName)
+	}
+	if tab.pendingResume.passphrase != "hunter2" {
+		t.Errorf("pendingResume.passphrase = %q", tab.pendingResume.passphrase)
+	}
+	if tab.daemonToken != "" {
+		t.Errorf("daemonToken = %q, want empty (no bind until resume decision)", tab.daemonToken)
+	}
+}
+
+// TestVaultResume_POSTCallsDaemonAndBinds verifies the POST /resume flow:
+// "resume" action forwards to the daemon, receives a token, and binds it
+// to the tab (clearing pendingResume).
+func TestVaultResume_POSTCallsDaemonAndBinds(t *testing.T) {
+	fake := &fakeClient{resumeToken: "resumed-token"}
+	srv, ts := newTestServer(t, fake)
+	cookie := seedCookie(t, srv)
+
+	// Stash a pending resume (simulates what handleVaultOpen did).
+	srv.tabs.stashPendingResume(cookie.Value, "work", "hunter2")
+
+	form := url.Values{}
+	form.Set("action", "resume")
+	req, _ := http.NewRequestWithContext(context.Background(), http.MethodPost, ts.URL+"/vault/work/resume", strings.NewReader(form.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.AddCookie(cookie)
+	resp, err := noRedirectClient().Do(req)
+	if err != nil {
+		t.Fatalf("POST resume: %v", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusSeeOther {
+		t.Fatalf("want 303, got %d", resp.StatusCode)
+	}
+	if got := resp.Header.Get("Location"); got != "/" {
+		t.Errorf("Location = %q, want /", got)
+	}
+	if fake.resumeLastAction != v1.ResumeRequest_ACTION_RESUME {
+		t.Errorf("daemon resume action = %v, want RESUME", fake.resumeLastAction)
+	}
+	if fake.resumeLastVault != "work" || fake.resumeLastPass != "hunter2" {
+		t.Errorf("daemon resume call = (%q, %q)", fake.resumeLastVault, fake.resumeLastPass)
+	}
+	tab := srv.tabs.get(cookie.Value)
+	if tab.daemonToken != "resumed-token" {
+		t.Errorf("tab.daemonToken = %q, want resumed-token", tab.daemonToken)
+	}
+	if tab.pendingResume != nil {
+		t.Error("pendingResume should be cleared after resume")
 	}
 }
 

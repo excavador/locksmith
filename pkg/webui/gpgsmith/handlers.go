@@ -26,6 +26,7 @@ type (
 		Cards      *cardsView
 		Servers    *serversView
 		Audit      *auditView
+		Resume     *resumeView
 	}
 
 	dashboardView struct {
@@ -52,6 +53,7 @@ type (
 		Keys       []keyRow
 		CardSerial string
 		CardModel  string
+		CardLabel  string
 	}
 	keyRow struct {
 		KeyID      string
@@ -110,6 +112,15 @@ type (
 		Action    string
 		Details   string
 	}
+
+	resumeView struct {
+		VaultName     string
+		Hostname      string
+		StartedAt     string
+		LastHeartbeat string
+		Status        string
+		Divergent     bool
+	}
 )
 
 const (
@@ -131,6 +142,8 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("GET /{$}", s.handleDashboard)
 
 	s.mux.HandleFunc("POST /vault/{name}/open", s.handleVaultOpen)
+	s.mux.HandleFunc("GET /vault/{name}/resume", s.handleVaultResumePrompt)
+	s.mux.HandleFunc("POST /vault/{name}/resume", s.handleVaultResume)
 	s.mux.HandleFunc("POST /vault/{name}/discard", s.handleVaultDiscard)
 
 	s.mux.HandleFunc("GET /vault/{name}/keys", s.handleKeys)
@@ -284,10 +297,115 @@ func (s *Server) handleVaultOpen(w http.ResponseWriter, r *http.Request) {
 	token := resp.GetToken()
 	if token == "" {
 		if ra := resp.GetResumeAvailable(); ra != nil {
-			http.Redirect(w, r, "/?err="+stringEscape("a recoverable session exists for "+name+"; resume from the CLI"), http.StatusSeeOther)
+			// Daemon found a recoverable ephemeral for this vault and
+			// needs the user to decide resume / discard / cancel.
+			// Stash the passphrase in the tab's in-memory state so the
+			// user does not have to retype it, then render the resume
+			// prompt page.
+			if !s.tabs.stashPendingResume(tab.cookieToken, name, passphrase) {
+				http.Error(w, "tab lost", http.StatusInternalServerError)
+				return
+			}
+			http.Redirect(w, r, "/vault/"+name+"/resume", http.StatusSeeOther)
 			return
 		}
 		http.Redirect(w, r, "/?err="+stringEscape("daemon returned empty token"), http.StatusSeeOther)
+		return
+	}
+	if !s.tabs.bind(tab.cookieToken, token, name) {
+		http.Error(w, "tab lost", http.StatusInternalServerError)
+		return
+	}
+	http.Redirect(w, r, "/", http.StatusSeeOther)
+}
+
+func (s *Server) handleVaultResumePrompt(w http.ResponseWriter, r *http.Request) {
+	tab, ok := tabFromContext(r.Context())
+	if !ok {
+		http.Error(w, "unauthorized", http.StatusUnauthorized)
+		return
+	}
+	if tab.pendingResume == nil {
+		http.Redirect(w, r, "/", http.StatusSeeOther)
+		return
+	}
+	name := r.PathValue("name")
+	if name != tab.pendingResume.vaultName {
+		http.Redirect(w, r, "/", http.StatusSeeOther)
+		return
+	}
+
+	view := &baseView{Title: "Resume session", Resume: &resumeView{VaultName: name}}
+	// Fetch the ephemeral details so the user can see what they're
+	// about to resume (started_at, last_heartbeat, divergent, etc.).
+	if status, err := s.client.VaultStatus(r.Context()); err == nil {
+		for _, rec := range status.GetRecoverable() {
+			if rec.GetCanonicalBase() == "" {
+				continue
+			}
+			if rec.GetHostname() != "" {
+				view.Resume.Hostname = rec.GetHostname()
+			}
+			if ts := rec.GetStartedAt(); ts != nil {
+				view.Resume.StartedAt = ts.AsTime().Format("2006-01-02 15:04:05 MST")
+			}
+			if ts := rec.GetLastHeartbeat(); ts != nil {
+				view.Resume.LastHeartbeat = ts.AsTime().Format("2006-01-02 15:04:05 MST")
+			}
+			view.Resume.Status = rec.GetStatus()
+			view.Resume.Divergent = rec.GetDivergent()
+			break
+		}
+	}
+	s.render(w, r, "resume", view)
+}
+
+func (s *Server) handleVaultResume(w http.ResponseWriter, r *http.Request) {
+	tab, ok := tabFromContext(r.Context())
+	if !ok {
+		http.Error(w, "unauthorized", http.StatusUnauthorized)
+		return
+	}
+	if err := r.ParseForm(); err != nil {
+		http.Error(w, "invalid form", http.StatusBadRequest)
+		return
+	}
+	name := r.PathValue("name")
+	action := r.PostForm.Get("action")
+	switch action {
+	case "resume", "discard":
+	case "cancel":
+		s.tabs.takePendingResume(tab.cookieToken)
+		http.Redirect(w, r, "/", http.StatusSeeOther)
+		return
+	default:
+		http.Error(w, "missing or unknown action", http.StatusBadRequest)
+		return
+	}
+
+	pending := s.tabs.takePendingResume(tab.cookieToken)
+	if pending == nil {
+		http.Redirect(w, r, "/?err="+stringEscape("no pending resume for this tab"), http.StatusSeeOther)
+		return
+	}
+	if pending.vaultName != name {
+		http.Redirect(w, r, "/?err="+stringEscape("resume vault name mismatch"), http.StatusSeeOther)
+		return
+	}
+
+	resp, err := s.client.VaultResume(r.Context(), name, pending.passphrase, action == "resume")
+	if err != nil {
+		s.logger.WarnContext(r.Context(), "webui: vault resume failed",
+			slog.String("vault", name),
+			slog.String("action", action),
+			slog.String("error", err.Error()),
+		)
+		http.Redirect(w, r, "/?err="+stringEscape(action+": "+err.Error()), http.StatusSeeOther)
+		return
+	}
+	token := resp.GetToken()
+	if token == "" {
+		http.Redirect(w, r, "/?err="+stringEscape("daemon returned empty token after "+action), http.StatusSeeOther)
 		return
 	}
 	if !s.tabs.bind(tab.cookieToken, token, name) {
@@ -356,6 +474,7 @@ func (s *Server) handleKeys(w http.ResponseWriter, r *http.Request) {
 	if card := statusResp.GetCard(); card != nil {
 		kv.CardSerial = card.GetSerial()
 		kv.CardModel = card.GetModel()
+		kv.CardLabel = card.GetLabel()
 	}
 	view.Keys = kv
 	s.render(w, r, "keys", view)

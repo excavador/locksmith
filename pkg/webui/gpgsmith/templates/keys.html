@@ -34,7 +34,11 @@
 
 <h2>Card (from KeyService.Status)</h2>
 {{- if .Keys.CardSerial}}
-<p><strong>Serial:</strong> <span class="mono">{{.Keys.CardSerial}}</span> &nbsp; <strong>Model:</strong> {{.Keys.CardModel}}</p>
+<p>
+    <strong>Label:</strong> {{template "dash" .Keys.CardLabel}} &nbsp;
+    <strong>Serial:</strong> <span class="mono">{{.Keys.CardSerial}}</span> &nbsp;
+    <strong>Model:</strong> {{template "dash" .Keys.CardModel}}
+</p>
 {{- else}}
 <p class="empty">No card detected.</p>
 {{- end}}

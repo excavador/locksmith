@@ -44,7 +44,12 @@ func ResumeSession(
 		return nil, fmt.Errorf("resume session: ephemeral is required")
 	}
 	if eph.SessionPath == "" {
-		return nil, fmt.Errorf("resume session: ephemeral has no state file on disk")
+		return nil, fmt.Errorf(
+			"resume session: nothing to resume — the .info sidecar for %q exists but no encrypted state file is on disk. "+
+				"This usually means a prior session was killed before it flushed any mutations. "+
+				"Discard the orphan .info (or retry `vault open` to overwrite it with a fresh session)",
+			filepath.Base(eph.InfoPath),
+		)
 	}
 
 	logger := opts.Logger

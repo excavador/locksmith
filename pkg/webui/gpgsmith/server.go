@@ -22,6 +22,7 @@ type (
 		VaultList(ctx context.Context) (*v1.ListResponse, error)
 		VaultStatus(ctx context.Context) (*v1.StatusVaultResponse, error)
 		VaultOpen(ctx context.Context, vaultName, passphrase string) (*v1.OpenResponse, error)
+		VaultResume(ctx context.Context, vaultName, passphrase string, resume bool) (*v1.ResumeResponse, error)
 		VaultDiscard(ctx context.Context, sessionToken string) error
 
 		KeyList(ctx context.Context, sessionToken string) (*v1.ListKeysResponse, error)

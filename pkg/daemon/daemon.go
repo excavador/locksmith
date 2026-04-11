@@ -530,13 +530,25 @@ func (d *Daemon) StatusVaults(_ context.Context) ([]wire.SessionInfo, []wire.Res
 			continue
 		}
 		eph, _ := gpgsmith.FindEphemeralFor(entry.Path, hostname)
-		if eph == nil {
+		if !isRecoverable(eph) {
 			continue
 		}
 		recoverable = append(recoverable, ephToResumeOption(eph))
 	}
 
 	return open, recoverable, nil
+}
+
+// isRecoverable reports whether a discovered Ephemeral has enough on-disk
+// state to be resumed. An .info sidecar alone is NOT enough: the
+// encrypted state file must exist too. Sessions that were started but
+// never flushed any mutations (so the state file was never written), or
+// that were killed before AutoSealAndDrop could run, leave behind an
+// orphan .info that looks like a resume candidate but would crash
+// ResumeSession with "ephemeral has no state file on disk". Filtering
+// those out here keeps both StatusVaults and OpenVault honest.
+func isRecoverable(eph *gpgsmith.Ephemeral) bool {
+	return eph != nil && eph.SessionPath != ""
 }
 
 func ephToResumeOption(eph *gpgsmith.Ephemeral) wire.ResumeOption {
@@ -577,10 +589,19 @@ func (d *Daemon) OpenVault(ctx context.Context, name, passphrase string, source 
 		hostname = unknownHostname
 	}
 
-	if eph, _ := gpgsmith.FindEphemeralFor(entry.Path, hostname); eph != nil {
+	if eph, _ := gpgsmith.FindEphemeralFor(entry.Path, hostname); isRecoverable(eph) {
 		opt := ephToResumeOption(eph)
 		opt.Divergent = isDivergent(entry.Path, eph)
 		return wire.OpenResult{ResumeAvailable: &opt}, "", nil
+	} else if eph != nil {
+		// Orphaned .info with no state file — usually a session that was
+		// killed before it wrote any mutations to disk. Log and ignore;
+		// the new session we are about to start will overwrite this file
+		// when it writes its own first heartbeat.
+		d.logger.WarnContext(ctx, "ignoring orphan ephemeral .info (no state file on disk)",
+			slog.String("vault", entry.Name),
+			slog.String("info", eph.InfoPath),
+		)
 	}
 
 	v, err := vault.NewWithPassphrase(entry.ToConfig(), passphrase, d.logger)

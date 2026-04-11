@@ -5,6 +5,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -214,6 +215,117 @@ func TestDaemonResumeAvailable(t *testing.T) {
 	if res2.Session != nil {
 		t.Error("expected no Session when resume is available")
 	}
+}
+
+// TestDaemonOpenIgnoresOrphanInfo verifies that an orphan .info sidecar
+// (one without a companion encrypted state file on disk) does NOT cause
+// OpenVault to return ResumeAvailable. This prevents the user-reported
+// v0.5.1 crash where the CLI resume path failed with "ephemeral has no
+// state file on disk" because the daemon offered to resume from a fresh
+// active session's heartbeat file that had never flushed mutations.
+func TestDaemonOpenIgnoresOrphanInfo(t *testing.T) {
+	cfgPath, name := makeDaemonTestVault(t, testMasterFP)
+	d := newTestDaemon(t, cfgPath)
+
+	// Figure out which canonical the daemon would open, then write an
+	// orphan .info next to it (no companion state file).
+	cfg, _ := vault.LoadConfig(cfgPath)
+	entry, _ := cfg.Resolve(name)
+	canonicalBase := findLatestCanonical(t, entry.Path)
+	hostname, _ := os.Hostname()
+	if hostname == "" {
+		hostname = "unknown"
+	}
+	_, infoBase := gpgsmith.SessionFilenamesFor(canonicalBase, hostname)
+	infoPath := filepath.Join(entry.Path, infoBase)
+	writeOrphanInfo(t, infoPath, hostname)
+
+	// Daemon.OpenVault should IGNORE the orphan and decrypt a fresh
+	// session, because the state file is missing.
+	ctx := context.Background()
+	res, token, err := d.OpenVault(ctx, name, testPassphrase, gpgsmith.LockSourceCLI)
+	if err != nil {
+		t.Fatalf("OpenVault with orphan .info: %v", err)
+	}
+	if res.ResumeAvailable != nil {
+		t.Errorf("ResumeAvailable = %+v, want nil (orphan should be ignored)", res.ResumeAvailable)
+	}
+	if res.Session == nil {
+		t.Fatal("expected fresh session, got nil")
+	}
+	if token == "" {
+		t.Error("expected non-empty token")
+	}
+}
+
+// TestDaemonStatusIgnoresOrphanInfo mirrors TestDaemonOpenIgnoresOrphanInfo
+// for the StatusVaults path — recoverable list must exclude orphan .info.
+func TestDaemonStatusIgnoresOrphanInfo(t *testing.T) {
+	cfgPath, name := makeDaemonTestVault(t, testMasterFP)
+	d := newTestDaemon(t, cfgPath)
+
+	cfg, _ := vault.LoadConfig(cfgPath)
+	entry, _ := cfg.Resolve(name)
+	canonicalBase := findLatestCanonical(t, entry.Path)
+	hostname, _ := os.Hostname()
+	if hostname == "" {
+		hostname = "unknown"
+	}
+	_, infoBase := gpgsmith.SessionFilenamesFor(canonicalBase, hostname)
+	infoPath := filepath.Join(entry.Path, infoBase)
+	writeOrphanInfo(t, infoPath, hostname)
+
+	_, recoverable, err := d.StatusVaults(context.Background())
+	if err != nil {
+		t.Fatalf("StatusVaults: %v", err)
+	}
+	if len(recoverable) != 0 {
+		t.Errorf("recoverable = %+v, want empty (orphan should be filtered)", recoverable)
+	}
+}
+
+// writeOrphanInfo writes a minimal EphemeralInfo sidecar to path without
+// any companion state file. Simulates a daemon that was killed before it
+// could flush any mutations.
+func writeOrphanInfo(t *testing.T, path, hostname string) {
+	t.Helper()
+	info := &gpgsmith.EphemeralInfo{
+		Hostname:      hostname,
+		Source:        gpgsmith.LockSourceCLI,
+		StartedAt:     time.Now().UTC(),
+		LastHeartbeat: time.Now().UTC(),
+		Status:        gpgsmith.EphemeralStatusActive,
+	}
+	if err := gpgsmith.WriteEphemeralInfo(path, info); err != nil {
+		t.Fatalf("write orphan info: %v", err)
+	}
+}
+
+// findLatestCanonical returns the lexically-greatest .tar.age filename
+// in vaultDir (that is what FindEphemeralFor resolves to).
+func findLatestCanonical(t *testing.T, vaultDir string) string {
+	t.Helper()
+	entries, err := os.ReadDir(vaultDir)
+	if err != nil {
+		t.Fatalf("read vault dir: %v", err)
+	}
+	latest := ""
+	for _, e := range entries {
+		if e.IsDir() {
+			continue
+		}
+		n := e.Name()
+		if !strings.HasSuffix(n, ".tar.age") {
+			continue
+		}
+		if n > latest {
+			latest = n
+		}
+	}
+	if latest == "" {
+		t.Fatal("no canonical .tar.age in vault dir")
+	}
+	return latest
 }
 
 func TestDaemonSubscribeEvents(t *testing.T) {

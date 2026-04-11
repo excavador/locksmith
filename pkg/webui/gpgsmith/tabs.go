@@ -18,6 +18,20 @@ type (
 		daemonToken string
 		vaultName   string
 		lastSeen    time.Time
+
+		// pendingResume carries the passphrase the user just typed into
+		// the open form when the daemon reported that the vault has a
+		// recoverable ephemeral and needs a resume/discard decision.
+		// Cleared once the decision is made (either branch of
+		// handleVaultResume) or when the user navigates away and makes
+		// a fresh open attempt. The in-memory process is loopback-only,
+		// so the passphrase never leaves this host.
+		pendingResume *pendingResume
+	}
+
+	pendingResume struct {
+		vaultName  string
+		passphrase string
 	}
 
 	// tabStore is a tiny in-memory map of cookieToken → tabState with
@@ -81,6 +95,35 @@ func (s *tabStore) unbind(cookieToken string) {
 	if t, ok := s.tabs[cookieToken]; ok {
 		t.daemonToken = ""
 		t.vaultName = ""
+		t.pendingResume = nil
 		t.lastSeen = time.Now()
 	}
+}
+
+// stashPendingResume stores the passphrase for an in-progress resume
+// decision on the tab. Returns false if the cookie is unknown.
+func (s *tabStore) stashPendingResume(cookieToken, vaultName, passphrase string) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	t, ok := s.tabs[cookieToken]
+	if !ok {
+		return false
+	}
+	t.pendingResume = &pendingResume{vaultName: vaultName, passphrase: passphrase}
+	t.lastSeen = time.Now()
+	return true
+}
+
+// takePendingResume returns and clears the pending resume stash for a
+// tab. Returns nil if none.
+func (s *tabStore) takePendingResume(cookieToken string) *pendingResume {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	t, ok := s.tabs[cookieToken]
+	if !ok || t.pendingResume == nil {
+		return nil
+	}
+	p := t.pendingResume
+	t.pendingResume = nil
+	return p
 }

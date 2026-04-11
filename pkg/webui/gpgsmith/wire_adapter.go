@@ -62,6 +62,23 @@ func (a *wireAdapter) VaultOpen(ctx context.Context, vaultName, passphrase strin
 	return resp.Msg, nil
 }
 
+func (a *wireAdapter) VaultResume(ctx context.Context, vaultName, passphrase string, resume bool) (*v1.ResumeResponse, error) {
+	action := v1.ResumeRequest_ACTION_DISCARD
+	if resume {
+		action = v1.ResumeRequest_ACTION_RESUME
+	}
+	resp, err := a.c.Vault.Resume(ctx, connect.NewRequest(&v1.ResumeRequest{
+		VaultName:  vaultName,
+		Passphrase: passphrase,
+		Source:     v1.LockSource_LOCK_SOURCE_UI,
+		Action:     action,
+	}))
+	if err != nil {
+		return nil, err
+	}
+	return resp.Msg, nil
+}
+
 func (a *wireAdapter) VaultDiscard(ctx context.Context, sessionToken string) error {
 	_, err := a.c.Vault.Discard(withToken(ctx, sessionToken), connect.NewRequest(&v1.DiscardRequest{}))
 	return err
