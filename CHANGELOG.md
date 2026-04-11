@@ -2,6 +2,30 @@
 
 ## Unreleased
 
+### Fixed
+
+- **`gpg --card-status` now succeeds even when another `scdaemon` already
+  holds the YubiKey.** On systems without `pcscd` (where `scdaemon` uses
+  its internal CCID driver via libusb), only one `scdaemon` at a time can
+  claim the OpenPGP applet. A typical Linux desktop has a long-running
+  `gpg-agent` for `~/.gnupg` (often via `enable-ssh-support` and the
+  systemd `gpg-agent.socket` unit) whose `scdaemon` claims the card on
+  first use. When gpgsmith opened a vault session and tried to call
+  `gpg --card-status` against the freshly-decrypted GNUPGHOME in
+  `/dev/shm`, the new `scdaemon` couldn't acquire the card and returned
+  `gpg: selecting card failed: No such device`. `gpgsmith card discover`,
+  `card provision`, `card rotate`, etc. all hit this error.
+
+  `pkg/gpg.Client.CardStatus` now detects this specific failure mode and
+  recovers automatically: it runs `gpgconf --kill scdaemon` to terminate
+  every `scdaemon` under the current user account, then retries the
+  `--card-status` call once. The killed `scdaemon` instances respawn on
+  the next gpg call from any homedir, so the user's normal gpg flow is
+  briefly interrupted but no permanent state is lost.
+
+  No user-facing change in behavior — `gpgsmith card discover` "just
+  works" now.
+
 ### Breaking
 
 - **The CLI is now a thin ConnectRPC client of the daemon.** Every

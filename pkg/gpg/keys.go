@@ -3,6 +3,8 @@ package gpg
 import (
 	"context"
 	"fmt"
+	"log/slog"
+	"os/exec"
 	"strconv"
 	"strings"
 	"time"
@@ -63,13 +65,56 @@ func (c *Client) ListSecretKeys(ctx context.Context) ([]SubKey, error) {
 }
 
 // CardStatus queries the connected smart card and returns its info.
+//
+// On systems without pcscd (where scdaemon uses internal CCID via libusb),
+// only one scdaemon at a time can claim a YubiKey. If the user has a
+// long-running gpg-agent for ~/.gnupg (typical for desktop Linux with
+// enable-ssh-support), its scdaemon will hold the card and a fresh
+// scdaemon spawned in the gpgsmith session's GNUPGHOME cannot acquire it.
+//
+// To handle this, we detect the "No such device" failure mode, kill all
+// conflicting scdaemons system-wide via `gpgconf --kill scdaemon` (which
+// affects every gpg-agent on this user account), and retry once. The
+// killed scdaemons will respawn on the next gpg call from any homedir,
+// so this is a transient interruption — no permanent state change.
 func (c *Client) CardStatus(ctx context.Context) (*CardInfo, error) {
 	out, err := c.exec(ctx, "--card-status", "--with-colons")
+	if err != nil && isCardConflict(err) {
+		c.logger.DebugContext(ctx, "card status: scdaemon conflict, killing and retrying",
+			slog.String("first_error", err.Error()),
+		)
+		_ = killAllScdaemons(ctx)
+		out, err = c.exec(ctx, "--card-status", "--with-colons")
+	}
 	if err != nil {
 		return nil, fmt.Errorf("card status: %w", err)
 	}
 
 	return parseCardStatus(string(out))
+}
+
+// isCardConflict reports whether a gpg --card-status error matches the
+// "another scdaemon already has the card" failure mode. The exact gpg
+// error string is "selecting card failed: No such device" — this fires
+// when scdaemon's libusb claim cannot acquire the YubiKey because another
+// scdaemon (typically the user's gpg-agent for ~/.gnupg) holds it.
+func isCardConflict(err error) bool {
+	if err == nil {
+		return false
+	}
+	msg := err.Error()
+	return strings.Contains(msg, "selecting card failed") ||
+		strings.Contains(msg, "OpenPGP card not available")
+}
+
+// killAllScdaemons runs `gpgconf --kill scdaemon` to terminate every
+// scdaemon under the current user account. The killed scdaemons respawn
+// on demand from any subsequent gpg call. Used as a recovery step when a
+// fresh gpg-agent in a gpgsmith session can't acquire the YubiKey because
+// the user's main gpg-agent already has it.
+func killAllScdaemons(ctx context.Context) error {
+	cmd := exec.CommandContext(ctx, "gpgconf", "--kill", "scdaemon")
+	return cmd.Run()
 }
 
 // parseColonsOutput parses gpg --with-colons output into SubKey records.
