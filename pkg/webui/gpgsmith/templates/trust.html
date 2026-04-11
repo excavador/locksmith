@@ -1,0 +1,57 @@
+{{define "trust"}}
+{{template "header" .}}
+<h2>Update TOFU trust anchor</h2>
+<p>This page replaces the master fingerprint that gpgsmith trusts for
+vault <code>{{.VaultName}}</code>. Only do this after you have
+independently verified the new fingerprint (for example, in-person
+verification with the vault owner).</p>
+
+<table>
+    <tbody>
+        <tr>
+            <th>Vault</th>
+            <td><code>{{.VaultName}}</code></td>
+        </tr>
+        <tr>
+            <th>Currently trusted fingerprint</th>
+            <td class="mono">{{template "dash" .Trust.CurrentFp}}</td>
+        </tr>
+    </tbody>
+</table>
+
+<form method="get" action="/vault/{{.VaultName}}/trust/confirm">
+    <label>
+        New fingerprint (40 hex characters):
+        <input type="text" name="fingerprint" pattern="[0-9A-Fa-f ]{40,60}" required size="50" placeholder="AAAA BBBB CCCC DDDD ... (40 hex)">
+    </label>
+    <button type="submit">Review change</button>
+    <a class="button secondary" href="/">Cancel</a>
+</form>
+{{template "footer" .}}
+{{end}}
+
+{{define "trust_confirm"}}
+{{template "header" .}}
+<h2>{{.Confirm.Title}}</h2>
+<p>{{.Confirm.Summary}}</p>
+<table>
+    <tbody>
+        <tr>
+            <th>Old fingerprint</th>
+            <td class="mono">{{template "dash" .Trust.CurrentFp}}</td>
+        </tr>
+        <tr>
+            <th>New fingerprint</th>
+            <td class="mono"><strong>{{.Trust.NewFp}}</strong></td>
+        </tr>
+    </tbody>
+</table>
+<form method="post" action="{{.Confirm.ConfirmURL}}">
+    {{- range .Confirm.Hidden}}
+    <input type="hidden" name="{{.Name}}" value="{{.Value}}">
+    {{- end}}
+    <button class="danger" type="submit">{{.Confirm.ConfirmLabel}}</button>
+    <a class="button secondary" href="{{.Confirm.CancelURL}}">Cancel</a>
+</form>
+{{template "footer" .}}
+{{end}}

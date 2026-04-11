@@ -1,0 +1,14 @@
+{{define "confirm"}}
+{{template "header" .}}
+<h2>{{.Confirm.Title}}</h2>
+<p>{{.Confirm.Summary}}</p>
+<p>Resource: <code class="mono">{{.Confirm.Resource}}</code></p>
+<form method="post" action="{{.Confirm.ConfirmURL}}">
+    {{- range .Confirm.Hidden}}
+    <input type="hidden" name="{{.Name}}" value="{{.Value}}">
+    {{- end}}
+    <button class="danger" type="submit">{{.Confirm.ConfirmLabel}}</button>
+    <a class="button secondary" href="{{.Confirm.CancelURL}}">Cancel</a>
+</form>
+{{template "footer" .}}
+{{end}}

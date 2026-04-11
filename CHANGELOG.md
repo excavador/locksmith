@@ -2,7 +2,86 @@
 
 ## Unreleased
 
+## v0.6.0 - 2026-04-11
+
+This is the first of four phased releases bringing the web UI to
+feature parity with the CLI. v0.6.0 adds every **Group A mutation** —
+synchronous, single-RPC, sub-second operations — to the web UI,
+together with server-rendered confirmation pages for destructive
+actions. The CLI and Web UI are now equivalent for these operations;
+you can pick whichever one suits your workflow.
+
 ### Added
+
+#### Web UI mutations (Group A)
+
+All 10 simple-mutation operations now have a web UI counterpart:
+
+- **`POST /vault/{name}/seal`** — inline form on the dashboard with a
+  `message` field. The session ends and the new snapshot filename is
+  surfaced via a success flash on the closed-state dashboard.
+- **`GET /vault/{name}/trust`, `GET …/trust/confirm`, `POST …/trust`** —
+  full page to view and replace the TOFU master fingerprint anchor,
+  with a side-by-side old-vs-new confirmation page. 40-hex-char
+  regex validation server-side; spaces are tolerated.
+- **`GET /vault/{name}/keys/revoke`, `POST …/keys/revoke`** — per-row
+  `Revoke` button on the keys table for subkeys only (primary/master
+  keys are not revokable this way, matching `gpgsmith keys revoke`).
+  GET returns a confirm page; POST executes.
+- **`POST /vault/{name}/identities/add`** — inline form at the top of
+  the identities page with a `uid` text input.
+- **`GET /vault/{name}/identities/revoke`, `POST …/identities/revoke`** —
+  per-row `Revoke` button with confirm page. Hidden on already-revoked
+  rows.
+- **`POST /vault/{name}/identities/primary`** — per-row `Set primary`
+  button. Suppressed on already-primary rows and revoked rows.
+- **`POST /vault/{name}/servers/add`** — inline form at the top of
+  the servers page with `alias` and `url` text inputs.
+- **`GET /vault/{name}/servers/remove`, `POST …/servers/remove`** —
+  per-row `Remove` button with confirm page.
+- **`POST /vault/{name}/servers/enable`**, **`POST …/servers/disable`** —
+  toggle button per row, no confirm required.
+
+#### New web UI primitives
+
+- **`confirm.html`** — generic server-rendered confirmation template.
+  Every destructive mutation routes through this page on a GET first,
+  then POSTs to the real endpoint. No native `confirm()` dialogs, no
+  JavaScript beyond HTMX, no inline-fragment confirmation.
+- **`trust.html`** — dedicated vault-trust update page with a
+  side-by-side old-vs-new fingerprint confirm variant. Replacing the
+  TOFU anchor is the most security-sensitive operation in gpgsmith,
+  so it gets an explicit two-step flow.
+- **Success flash channel.** New `?flash=<message>` query parameter
+  with a `.Flash` field on `baseView`, rendered in the layout
+  alongside `.Error`. Used by the seal handler to surface snapshot
+  filenames and by other mutations as a success breadcrumb.
+- **11 new `DaemonClient` interface methods:** `VaultSeal`,
+  `VaultTrust`, `KeyRevoke`, `IdentityAdd`, `IdentityRevoke`,
+  `IdentityPrimary`, `ServerAdd`, `ServerRemove`, `ServerEnable`,
+  `ServerDisable` — all thin wrappers around the existing daemon
+  RPCs. Each also has a matching `wireAdapter` production
+  implementation and a recording stub on the test `fakeClient`.
+
+#### Tests
+
+- **14 new unit tests** in `pkg/webui/gpgsmith/webui_test.go` covering
+  every new handler: happy-path POSTs, confirm-page rendering, form
+  validation failures (`TestServerAdd_InvalidInput_FlashesError`),
+  and the trust confirm page showing both old and new fingerprints.
+- **5 new e2e tests** in `pkg/webui/gpgsmith/e2e_test.go`:
+  `TestE2E_ServerAdd_FormSubmit`, `TestE2E_ServerEnable_Toggle`,
+  `TestE2E_ServerRemove_ConfirmFlow`, `TestE2E_VaultTrust_ConfirmFlow`,
+  `TestE2E_Seal_FromDashboard`. Identity / key revoke flows are
+  covered by unit tests only because the DEADBEEF-fp test vault has
+  no real GPG keyring to mutate (would require ~5s of RSA 2048 gen
+  per test).
+- Shared `openVaultUI` helper factored out of the navigation test for
+  reuse by the mutation tests.
+- E2E suite runtime: ~9.9 seconds locally, still under the 10s target
+  even with 5 additional tests.
+
+#### Supporting changes
 
 - **End-to-end browser tests for the web UI.** New
   `pkg/webui/gpgsmith/e2e_test.go` (behind `//go:build e2e`) drives a

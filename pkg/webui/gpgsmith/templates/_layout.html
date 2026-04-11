@@ -26,6 +26,9 @@
     {{- if .Error}}
     <div class="alert">{{.Error}}</div>
     {{- end}}
+    {{- if .Flash}}
+    <div class="flash">{{.Flash}}</div>
+    {{- end}}
 {{end}}
 
 {{define "footer"}}

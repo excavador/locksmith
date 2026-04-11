@@ -7,7 +7,13 @@ import (
 	"log/slog"
 	"net/http"
 	"net/url"
+	"regexp"
+	"strings"
 	"time"
+)
+
+var (
+	hexFingerprintRe = regexp.MustCompile(`^[0-9a-fA-F]{40}$`)
 )
 
 type (
@@ -19,6 +25,7 @@ type (
 		Title     string
 		VaultName string // informational — taken from the tabState
 		Error     string
+		Flash     string // transient success message (e.g. "sealed: snapshot …")
 
 		Dashboard  *dashboardView
 		Keys       *keysView
@@ -27,6 +34,30 @@ type (
 		Servers    *serversView
 		Audit      *auditView
 		Resume     *resumeView
+		Confirm    *confirmView
+		Trust      *trustView
+	}
+
+	// confirmView backs the generic confirmation page used by every
+	// destructive Group A operation. Hidden fields are emitted in
+	// iteration order — don't rely on a specific order across renders.
+	confirmView struct {
+		Title        string
+		Summary      string
+		Resource     string
+		ConfirmLabel string
+		ConfirmURL   string // POST target
+		CancelURL    string // where the Cancel link goes
+		Hidden       []confirmHidden
+	}
+	confirmHidden struct {
+		Name  string
+		Value string
+	}
+
+	trustView struct {
+		CurrentFp string
+		NewFp     string // only set on the confirm sub-page
 	}
 
 	dashboardView struct {
@@ -87,11 +118,13 @@ type (
 		Identities []identityRow
 	}
 	identityRow struct {
-		Index   int32
-		Status  string
-		Created string
-		Revoked string
-		UID     string
+		Index     int32
+		Status    string
+		Created   string
+		Revoked   string
+		UID       string
+		IsRevoked bool
+		IsPrimary bool
 	}
 
 	cardsView struct {
@@ -147,7 +180,15 @@ const (
 
 // templateFuncs is the func map attached to every parsed template.
 func templateFuncs() template.FuncMap {
-	return template.FuncMap{}
+	return template.FuncMap{
+		// hasC reports whether a GPG usage string contains the
+		// certification capability flag "C", which marks the master
+		// (primary) key. Used by keys.html to hide the Revoke button
+		// on the master key.
+		"hasC": func(usage string) bool {
+			return strings.ContainsAny(usage, "Cc")
+		},
+	}
 }
 
 // routes wires up the HTTP mux. Uses Go 1.22 method+path routing.
@@ -170,6 +211,23 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("GET /vault/{name}/servers", s.handleServers)
 	s.mux.HandleFunc("GET /vault/{name}/servers/lookup", s.handleServersLookupFragment)
 	s.mux.HandleFunc("GET /vault/{name}/audit", s.handleAudit)
+
+	// Group A mutations (v0.6.0).
+	s.mux.HandleFunc("POST /vault/{name}/seal", s.handleVaultSeal)
+	s.mux.HandleFunc("GET /vault/{name}/trust", s.handleVaultTrustPage)
+	s.mux.HandleFunc("GET /vault/{name}/trust/confirm", s.handleVaultTrustConfirm)
+	s.mux.HandleFunc("POST /vault/{name}/trust", s.handleVaultTrust)
+	s.mux.HandleFunc("GET /vault/{name}/keys/revoke", s.handleKeyRevokeConfirm)
+	s.mux.HandleFunc("POST /vault/{name}/keys/revoke", s.handleKeyRevoke)
+	s.mux.HandleFunc("POST /vault/{name}/identities/add", s.handleIdentityAdd)
+	s.mux.HandleFunc("GET /vault/{name}/identities/revoke", s.handleIdentityRevokeConfirm)
+	s.mux.HandleFunc("POST /vault/{name}/identities/revoke", s.handleIdentityRevoke)
+	s.mux.HandleFunc("POST /vault/{name}/identities/primary", s.handleIdentityPrimary)
+	s.mux.HandleFunc("POST /vault/{name}/servers/add", s.handleServerAdd)
+	s.mux.HandleFunc("GET /vault/{name}/servers/remove", s.handleServerRemoveConfirm)
+	s.mux.HandleFunc("POST /vault/{name}/servers/remove", s.handleServerRemove)
+	s.mux.HandleFunc("POST /vault/{name}/servers/enable", s.handleServerEnable)
+	s.mux.HandleFunc("POST /vault/{name}/servers/disable", s.handleServerDisable)
 }
 
 // render writes an HTML page. name is the template block name
@@ -225,6 +283,9 @@ func (s *Server) handleDashboard(w http.ResponseWriter, r *http.Request) {
 	}
 	if e := r.URL.Query().Get("err"); e != "" {
 		view.Error = e
+	}
+	if f := r.URL.Query().Get("flash"); f != "" {
+		view.Flash = f
 	}
 
 	dv := &dashboardView{}
@@ -454,6 +515,12 @@ func (s *Server) handleKeys(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	view := &baseView{Title: "Keys", VaultName: tab.vaultName}
+	if e := r.URL.Query().Get("err"); e != "" {
+		view.Error = e
+	}
+	if f := r.URL.Query().Get("flash"); f != "" {
+		view.Flash = f
+	}
 
 	listResp, err := s.client.KeyList(r.Context(), tab.daemonToken)
 	if err != nil {
@@ -530,6 +597,12 @@ func (s *Server) handleIdentities(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	view := &baseView{Title: "Identities", VaultName: tab.vaultName}
+	if e := r.URL.Query().Get("err"); e != "" {
+		view.Error = e
+	}
+	if f := r.URL.Query().Get("flash"); f != "" {
+		view.Flash = f
+	}
 
 	resp, err := s.client.IdentityList(r.Context(), tab.daemonToken)
 	if err != nil {
@@ -548,12 +621,16 @@ func (s *Server) handleIdentities(w http.ResponseWriter, r *http.Request) {
 		if ts := id.GetRevoked(); ts != nil && !ts.AsTime().IsZero() {
 			revoked = ts.AsTime().Format("2006-01-02")
 		}
+		status := id.GetStatus()
+		isRevoked := strings.EqualFold(status, "revoked") || (id.GetRevoked() != nil && !id.GetRevoked().AsTime().IsZero())
 		iv.Identities = append(iv.Identities, identityRow{
-			Index:   id.GetIndex(),
-			Status:  id.GetStatus(),
-			Created: created,
-			Revoked: revoked,
-			UID:     id.GetUid(),
+			Index:     id.GetIndex(),
+			Status:    status,
+			Created:   created,
+			Revoked:   revoked,
+			UID:       id.GetUid(),
+			IsRevoked: isRevoked,
+			IsPrimary: id.GetIndex() == 1,
 		})
 	}
 	view.Identities = iv
@@ -595,6 +672,12 @@ func (s *Server) handleServers(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	view := &baseView{Title: "Servers", VaultName: tab.vaultName}
+	if e := r.URL.Query().Get("err"); e != "" {
+		view.Error = e
+	}
+	if f := r.URL.Query().Get("flash"); f != "" {
+		view.Flash = f
+	}
 
 	listResp, err := s.client.ServerList(r.Context(), tab.daemonToken)
 	if err != nil {
@@ -698,4 +781,423 @@ func (s *Server) handleAudit(w http.ResponseWriter, r *http.Request) {
 // `?err=` flash parameter.
 func stringEscape(s string) string {
 	return url.QueryEscape(s)
+}
+
+// =============================================================================
+// Group A mutation handlers (v0.6.0)
+// =============================================================================
+
+// redirectErr redirects back to `dest` with the error flashed via
+// ?err=<encoded>.
+func (s *Server) redirectErr(w http.ResponseWriter, r *http.Request, dest, msg string) {
+	http.Redirect(w, r, dest+"?err="+stringEscape(msg), http.StatusSeeOther)
+}
+
+// redirectFlash redirects with a ?flash= success message.
+func (s *Server) redirectFlash(w http.ResponseWriter, r *http.Request, dest, msg string) {
+	http.Redirect(w, r, dest+"?flash="+stringEscape(msg), http.StatusSeeOther)
+}
+
+func (s *Server) handleVaultSeal(w http.ResponseWriter, r *http.Request) {
+	tab := s.requireBoundTab(w, r)
+	if tab == nil {
+		return
+	}
+	if err := r.ParseForm(); err != nil {
+		http.Error(w, "invalid form", http.StatusBadRequest)
+		return
+	}
+	msg := strings.TrimSpace(r.PostForm.Get("message"))
+	if msg == "" {
+		s.redirectErr(w, r, "/", "seal: message is required")
+		return
+	}
+	resp, err := s.client.VaultSeal(r.Context(), tab.daemonToken, msg)
+	if err != nil {
+		s.logger.WarnContext(r.Context(), "webui: vault seal failed",
+			slog.String("error", err.Error()),
+		)
+		s.redirectErr(w, r, "/", "seal: "+err.Error())
+		return
+	}
+	// Sealing ends the daemon session; unbind the tab so the dashboard
+	// renders the closed state.
+	s.tabs.unbind(tab.cookieToken)
+
+	flash := "vault sealed"
+	if snap := resp.GetSnapshot(); snap != nil && snap.GetFilename() != "" {
+		flash = "sealed: " + snap.GetFilename()
+	}
+	s.redirectFlash(w, r, "/", flash)
+}
+
+func (s *Server) handleVaultTrustPage(w http.ResponseWriter, r *http.Request) {
+	if _, ok := tabFromContext(r.Context()); !ok {
+		http.Error(w, "unauthorized", http.StatusUnauthorized)
+		return
+	}
+	name := r.PathValue("name")
+	if name == "" {
+		http.Error(w, "missing vault name", http.StatusBadRequest)
+		return
+	}
+
+	view := &baseView{Title: "Update trust anchor", VaultName: name}
+	if e := r.URL.Query().Get("err"); e != "" {
+		view.Error = e
+	}
+	tv := &trustView{}
+	if listResp, err := s.client.VaultList(r.Context()); err == nil {
+		for _, v := range listResp.GetVaults() {
+			if v.GetName() == name {
+				tv.CurrentFp = v.GetTrustedMasterFp()
+				break
+			}
+		}
+	}
+	view.Trust = tv
+	s.render(w, r, "trust", view)
+}
+
+func (s *Server) handleVaultTrustConfirm(w http.ResponseWriter, r *http.Request) {
+	if _, ok := tabFromContext(r.Context()); !ok {
+		http.Error(w, "unauthorized", http.StatusUnauthorized)
+		return
+	}
+	name := r.PathValue("name")
+	if name == "" {
+		http.Error(w, "missing vault name", http.StatusBadRequest)
+		return
+	}
+	newFp := strings.TrimSpace(r.URL.Query().Get("fingerprint"))
+	newFp = strings.ToUpper(strings.ReplaceAll(newFp, " ", ""))
+	if !hexFingerprintRe.MatchString(newFp) {
+		s.redirectErr(w, r, "/vault/"+name+"/trust", "fingerprint must be exactly 40 hex characters")
+		return
+	}
+
+	view := &baseView{Title: "Confirm: update trust anchor", VaultName: name}
+	tv := &trustView{NewFp: newFp}
+	if listResp, err := s.client.VaultList(r.Context()); err == nil {
+		for _, v := range listResp.GetVaults() {
+			if v.GetName() == name {
+				tv.CurrentFp = v.GetTrustedMasterFp()
+				break
+			}
+		}
+	}
+	view.Trust = tv
+	view.Confirm = &confirmView{
+		Title: "Confirm: update trust anchor",
+		Summary: "This replaces the TOFU-trusted master fingerprint for vault " + name +
+			". After this change, gpgsmith will only accept snapshots signed by the new fingerprint.",
+		Resource:     newFp,
+		ConfirmLabel: "Replace trust anchor",
+		ConfirmURL:   "/vault/" + name + "/trust",
+		CancelURL:    "/vault/" + name + "/trust",
+		Hidden: []confirmHidden{
+			{Name: "fingerprint", Value: newFp},
+		},
+	}
+	s.render(w, r, "trust_confirm", view)
+}
+
+func (s *Server) handleVaultTrust(w http.ResponseWriter, r *http.Request) {
+	if _, ok := tabFromContext(r.Context()); !ok {
+		http.Error(w, "unauthorized", http.StatusUnauthorized)
+		return
+	}
+	if err := r.ParseForm(); err != nil {
+		http.Error(w, "invalid form", http.StatusBadRequest)
+		return
+	}
+	name := r.PathValue("name")
+	newFp := strings.TrimSpace(r.PostForm.Get("fingerprint"))
+	newFp = strings.ToUpper(strings.ReplaceAll(newFp, " ", ""))
+	if !hexFingerprintRe.MatchString(newFp) {
+		s.redirectErr(w, r, "/vault/"+name+"/trust", "fingerprint must be exactly 40 hex characters")
+		return
+	}
+	if err := s.client.VaultTrust(r.Context(), name, newFp); err != nil {
+		s.logger.WarnContext(r.Context(), "webui: vault trust failed",
+			slog.String("vault", name),
+			slog.String("error", err.Error()),
+		)
+		s.redirectErr(w, r, "/vault/"+name+"/trust", "trust: "+err.Error())
+		return
+	}
+	s.redirectFlash(w, r, "/", "trust anchor updated for "+name)
+}
+
+func (s *Server) handleKeyRevokeConfirm(w http.ResponseWriter, r *http.Request) {
+	tab := s.requireBoundTab(w, r)
+	if tab == nil {
+		return
+	}
+	keyID := strings.TrimSpace(r.URL.Query().Get("key_id"))
+	if keyID == "" {
+		s.redirectErr(w, r, "/vault/"+tab.vaultName+"/keys", "revoke: missing key_id")
+		return
+	}
+	view := &baseView{Title: "Confirm: revoke subkey", VaultName: tab.vaultName}
+	view.Confirm = &confirmView{
+		Title: "Confirm: revoke subkey",
+		Summary: "This will mark subkey " + keyID +
+			" as revoked on the master key and auto-republish the master public key to enabled keyservers. The revocation is permanent.",
+		Resource:     keyID,
+		ConfirmLabel: "Revoke subkey",
+		ConfirmURL:   "/vault/" + tab.vaultName + "/keys/revoke",
+		CancelURL:    "/vault/" + tab.vaultName + "/keys",
+		Hidden: []confirmHidden{
+			{Name: "key_id", Value: keyID},
+		},
+	}
+	s.render(w, r, "confirm", view)
+}
+
+func (s *Server) handleKeyRevoke(w http.ResponseWriter, r *http.Request) {
+	tab := s.requireBoundTab(w, r)
+	if tab == nil {
+		return
+	}
+	if err := r.ParseForm(); err != nil {
+		http.Error(w, "invalid form", http.StatusBadRequest)
+		return
+	}
+	keyID := strings.TrimSpace(r.PostForm.Get("key_id"))
+	dest := "/vault/" + tab.vaultName + "/keys"
+	if keyID == "" {
+		s.redirectErr(w, r, dest, "revoke: missing key_id")
+		return
+	}
+	if err := s.client.KeyRevoke(r.Context(), tab.daemonToken, keyID); err != nil {
+		s.logger.WarnContext(r.Context(), "webui: key revoke failed",
+			slog.String("key_id", keyID),
+			slog.String("error", err.Error()),
+		)
+		s.redirectErr(w, r, dest, "revoke: "+err.Error())
+		return
+	}
+	s.redirectFlash(w, r, dest, "subkey "+keyID+" revoked")
+}
+
+func (s *Server) handleIdentityAdd(w http.ResponseWriter, r *http.Request) {
+	tab := s.requireBoundTab(w, r)
+	if tab == nil {
+		return
+	}
+	if err := r.ParseForm(); err != nil {
+		http.Error(w, "invalid form", http.StatusBadRequest)
+		return
+	}
+	uid := strings.TrimSpace(r.PostForm.Get("uid"))
+	dest := "/vault/" + tab.vaultName + "/identities"
+	if uid == "" {
+		s.redirectErr(w, r, dest, "add identity: uid is required")
+		return
+	}
+	if err := s.client.IdentityAdd(r.Context(), tab.daemonToken, uid); err != nil {
+		s.logger.WarnContext(r.Context(), "webui: identity add failed",
+			slog.String("error", err.Error()),
+		)
+		s.redirectErr(w, r, dest, "add identity: "+err.Error())
+		return
+	}
+	s.redirectFlash(w, r, dest, "identity added: "+uid)
+}
+
+func (s *Server) handleIdentityRevokeConfirm(w http.ResponseWriter, r *http.Request) {
+	tab := s.requireBoundTab(w, r)
+	if tab == nil {
+		return
+	}
+	uid := strings.TrimSpace(r.URL.Query().Get("uid"))
+	if uid == "" {
+		s.redirectErr(w, r, "/vault/"+tab.vaultName+"/identities", "revoke identity: missing uid")
+		return
+	}
+	view := &baseView{Title: "Confirm: revoke identity", VaultName: tab.vaultName}
+	view.Confirm = &confirmView{
+		Title:        "Confirm: revoke identity",
+		Summary:      "This will mark the identity as revoked on the master key and auto-republish the updated master key to enabled keyservers.",
+		Resource:     uid,
+		ConfirmLabel: "Revoke identity",
+		ConfirmURL:   "/vault/" + tab.vaultName + "/identities/revoke",
+		CancelURL:    "/vault/" + tab.vaultName + "/identities",
+		Hidden: []confirmHidden{
+			{Name: "uid", Value: uid},
+		},
+	}
+	s.render(w, r, "confirm", view)
+}
+
+func (s *Server) handleIdentityRevoke(w http.ResponseWriter, r *http.Request) {
+	tab := s.requireBoundTab(w, r)
+	if tab == nil {
+		return
+	}
+	if err := r.ParseForm(); err != nil {
+		http.Error(w, "invalid form", http.StatusBadRequest)
+		return
+	}
+	uid := strings.TrimSpace(r.PostForm.Get("uid"))
+	dest := "/vault/" + tab.vaultName + "/identities"
+	if uid == "" {
+		s.redirectErr(w, r, dest, "revoke identity: missing uid")
+		return
+	}
+	if err := s.client.IdentityRevoke(r.Context(), tab.daemonToken, uid); err != nil {
+		s.logger.WarnContext(r.Context(), "webui: identity revoke failed",
+			slog.String("error", err.Error()),
+		)
+		s.redirectErr(w, r, dest, "revoke identity: "+err.Error())
+		return
+	}
+	s.redirectFlash(w, r, dest, "identity revoked")
+}
+
+func (s *Server) handleIdentityPrimary(w http.ResponseWriter, r *http.Request) {
+	tab := s.requireBoundTab(w, r)
+	if tab == nil {
+		return
+	}
+	if err := r.ParseForm(); err != nil {
+		http.Error(w, "invalid form", http.StatusBadRequest)
+		return
+	}
+	uid := strings.TrimSpace(r.PostForm.Get("uid"))
+	dest := "/vault/" + tab.vaultName + "/identities"
+	if uid == "" {
+		s.redirectErr(w, r, dest, "primary identity: missing uid")
+		return
+	}
+	if err := s.client.IdentityPrimary(r.Context(), tab.daemonToken, uid); err != nil {
+		s.logger.WarnContext(r.Context(), "webui: identity primary failed",
+			slog.String("error", err.Error()),
+		)
+		s.redirectErr(w, r, dest, "primary identity: "+err.Error())
+		return
+	}
+	s.redirectFlash(w, r, dest, "primary identity set")
+}
+
+func (s *Server) handleServerAdd(w http.ResponseWriter, r *http.Request) {
+	tab := s.requireBoundTab(w, r)
+	if tab == nil {
+		return
+	}
+	if err := r.ParseForm(); err != nil {
+		http.Error(w, "invalid form", http.StatusBadRequest)
+		return
+	}
+	alias := strings.TrimSpace(r.PostForm.Get("alias"))
+	u := strings.TrimSpace(r.PostForm.Get("url"))
+	dest := "/vault/" + tab.vaultName + "/servers"
+	if alias == "" || u == "" {
+		s.redirectErr(w, r, dest, "add server: alias and url are required")
+		return
+	}
+	if err := s.client.ServerAdd(r.Context(), tab.daemonToken, alias, u); err != nil {
+		s.logger.WarnContext(r.Context(), "webui: server add failed",
+			slog.String("alias", alias),
+			slog.String("error", err.Error()),
+		)
+		s.redirectErr(w, r, dest, "add server: "+err.Error())
+		return
+	}
+	s.redirectFlash(w, r, dest, "server added: "+alias)
+}
+
+func (s *Server) handleServerRemoveConfirm(w http.ResponseWriter, r *http.Request) {
+	tab := s.requireBoundTab(w, r)
+	if tab == nil {
+		return
+	}
+	alias := strings.TrimSpace(r.URL.Query().Get("alias"))
+	if alias == "" {
+		s.redirectErr(w, r, "/vault/"+tab.vaultName+"/servers", "remove server: missing alias")
+		return
+	}
+	view := &baseView{Title: "Confirm: remove keyserver", VaultName: tab.vaultName}
+	view.Confirm = &confirmView{
+		Title:        "Confirm: remove keyserver",
+		Summary:      "This will delete the keyserver entry from the vault's publish list. Future publish runs will no longer target it.",
+		Resource:     alias,
+		ConfirmLabel: "Remove keyserver",
+		ConfirmURL:   "/vault/" + tab.vaultName + "/servers/remove",
+		CancelURL:    "/vault/" + tab.vaultName + "/servers",
+		Hidden: []confirmHidden{
+			{Name: "alias", Value: alias},
+		},
+	}
+	s.render(w, r, "confirm", view)
+}
+
+func (s *Server) handleServerRemove(w http.ResponseWriter, r *http.Request) {
+	tab := s.requireBoundTab(w, r)
+	if tab == nil {
+		return
+	}
+	if err := r.ParseForm(); err != nil {
+		http.Error(w, "invalid form", http.StatusBadRequest)
+		return
+	}
+	alias := strings.TrimSpace(r.PostForm.Get("alias"))
+	dest := "/vault/" + tab.vaultName + "/servers"
+	if alias == "" {
+		s.redirectErr(w, r, dest, "remove server: missing alias")
+		return
+	}
+	if err := s.client.ServerRemove(r.Context(), tab.daemonToken, alias); err != nil {
+		s.logger.WarnContext(r.Context(), "webui: server remove failed",
+			slog.String("error", err.Error()),
+		)
+		s.redirectErr(w, r, dest, "remove server: "+err.Error())
+		return
+	}
+	s.redirectFlash(w, r, dest, "server removed: "+alias)
+}
+
+func (s *Server) handleServerEnable(w http.ResponseWriter, r *http.Request) {
+	s.handleServerToggle(w, r, true)
+}
+
+func (s *Server) handleServerDisable(w http.ResponseWriter, r *http.Request) {
+	s.handleServerToggle(w, r, false)
+}
+
+func (s *Server) handleServerToggle(w http.ResponseWriter, r *http.Request, enable bool) {
+	tab := s.requireBoundTab(w, r)
+	if tab == nil {
+		return
+	}
+	if err := r.ParseForm(); err != nil {
+		http.Error(w, "invalid form", http.StatusBadRequest)
+		return
+	}
+	alias := strings.TrimSpace(r.PostForm.Get("alias"))
+	dest := "/vault/" + tab.vaultName + "/servers"
+	verb := "enable"
+	if !enable {
+		verb = "disable"
+	}
+	if alias == "" {
+		s.redirectErr(w, r, dest, verb+" server: missing alias")
+		return
+	}
+	var err error
+	if enable {
+		err = s.client.ServerEnable(r.Context(), tab.daemonToken, alias)
+	} else {
+		err = s.client.ServerDisable(r.Context(), tab.daemonToken, alias)
+	}
+	if err != nil {
+		s.logger.WarnContext(r.Context(), "webui: server toggle failed",
+			slog.String("verb", verb),
+			slog.String("error", err.Error()),
+		)
+		s.redirectErr(w, r, dest, verb+" server: "+err.Error())
+		return
+	}
+	s.redirectFlash(w, r, dest, "server "+verb+"d: "+alias)
 }

@@ -139,3 +139,62 @@ func (a *wireAdapter) AuditShow(ctx context.Context, sessionToken string, last i
 	}
 	return resp.Msg, nil
 }
+
+func (a *wireAdapter) VaultSeal(ctx context.Context, sessionToken, message string) (*v1.SealResponse, error) {
+	resp, err := a.c.Vault.Seal(withToken(ctx, sessionToken), connect.NewRequest(&v1.SealRequest{Message: message}))
+	if err != nil {
+		return nil, err
+	}
+	return resp.Msg, nil
+}
+
+func (a *wireAdapter) VaultTrust(ctx context.Context, vaultName, fingerprint string) error {
+	_, err := a.c.Vault.Trust(ctx, connect.NewRequest(&v1.TrustRequest{
+		VaultName:   vaultName,
+		Fingerprint: fingerprint,
+	}))
+	return err
+}
+
+func (a *wireAdapter) KeyRevoke(ctx context.Context, sessionToken, keyID string) error {
+	_, err := a.c.Key.Revoke(withToken(ctx, sessionToken), connect.NewRequest(&v1.RevokeRequest{KeyId: keyID}))
+	return err
+}
+
+func (a *wireAdapter) IdentityAdd(ctx context.Context, sessionToken, uid string) error {
+	_, err := a.c.Identity.Add(withToken(ctx, sessionToken), connect.NewRequest(&v1.AddIdentityRequest{Uid: uid}))
+	return err
+}
+
+func (a *wireAdapter) IdentityRevoke(ctx context.Context, sessionToken, uid string) error {
+	_, err := a.c.Identity.Revoke(withToken(ctx, sessionToken), connect.NewRequest(&v1.RevokeIdentityRequest{Uid: uid}))
+	return err
+}
+
+func (a *wireAdapter) IdentityPrimary(ctx context.Context, sessionToken, uid string) error {
+	_, err := a.c.Identity.Primary(withToken(ctx, sessionToken), connect.NewRequest(&v1.PrimaryIdentityRequest{Uid: uid}))
+	return err
+}
+
+func (a *wireAdapter) ServerAdd(ctx context.Context, sessionToken, alias, url string) error {
+	_, err := a.c.Server.Add(withToken(ctx, sessionToken), connect.NewRequest(&v1.AddServerRequest{
+		Alias: alias,
+		Url:   url,
+	}))
+	return err
+}
+
+func (a *wireAdapter) ServerRemove(ctx context.Context, sessionToken, alias string) error {
+	_, err := a.c.Server.Remove(withToken(ctx, sessionToken), connect.NewRequest(&v1.RemoveServerRequest{Alias: alias}))
+	return err
+}
+
+func (a *wireAdapter) ServerEnable(ctx context.Context, sessionToken, alias string) error {
+	_, err := a.c.Server.Enable(withToken(ctx, sessionToken), connect.NewRequest(&v1.EnableServerRequest{Alias: alias}))
+	return err
+}
+
+func (a *wireAdapter) ServerDisable(ctx context.Context, sessionToken, alias string) error {
+	_, err := a.c.Server.Disable(withToken(ctx, sessionToken), connect.NewRequest(&v1.DisableServerRequest{Alias: alias}))
+	return err
+}

@@ -1,6 +1,15 @@
 {{define "identities"}}
 {{template "header" .}}
 <h2>Identities</h2>
+
+<form class="inline" method="post" action="/vault/{{.VaultName}}/identities/add">
+    <label>
+        Add identity:
+        <input type="text" name="uid" size="40" required placeholder="Your Name <you@example.com>">
+    </label>
+    <button type="submit">Add</button>
+</form>
+
 {{- if not .Identities.Identities}}
 <p class="empty">No identities on the master key.</p>
 {{- else}}
@@ -12,6 +21,7 @@
             <th>Created</th>
             <th>Revoked</th>
             <th>Identity</th>
+            <th>Actions</th>
         </tr>
     </thead>
     <tbody>
@@ -22,6 +32,22 @@
             <td>{{template "dash" .Created}}</td>
             <td>{{template "dash" .Revoked}}</td>
             <td>{{.UID}}</td>
+            <td>
+                {{- if not .IsRevoked}}
+                    {{- if not .IsPrimary}}
+                    <form class="inline" method="post" action="/vault/{{$.VaultName}}/identities/primary">
+                        <input type="hidden" name="uid" value="{{.UID}}">
+                        <button type="submit">Set primary</button>
+                    </form>
+                    {{- end}}
+                    <form class="inline" method="get" action="/vault/{{$.VaultName}}/identities/revoke">
+                        <input type="hidden" name="uid" value="{{.UID}}">
+                        <button class="danger" type="submit">Revoke</button>
+                    </form>
+                {{- else}}
+                <span class="muted">revoked</span>
+                {{- end}}
+            </td>
         </tr>
         {{- end}}
     </tbody>

@@ -20,7 +20,7 @@
         <tr>
             <td><code>{{.Name}}</code>{{if .IsDefault}} <span class="muted">(default)</span>{{end}}</td>
             <td class="mono">{{.Path}}</td>
-            <td class="mono">{{template "dash" .TrustedFp}}</td>
+            <td class="mono">{{template "dash" .TrustedFp}} <a href="/vault/{{.Name}}/trust">update trust</a></td>
             <td>{{if .OpenInTab}}<strong>bound to this tab</strong>{{else if .OpenElsewhere}}<span class="muted">open elsewhere</span>{{else}}<span class="muted">closed</span>{{end}}</td>
             <td>
                 {{- if eq $tabVault .Name}}
@@ -38,6 +38,19 @@
         {{- end}}
     </tbody>
 </table>
+{{- end}}
+
+{{- if .Dashboard.TabVaultName}}
+<h2>Seal vault bound to this tab</h2>
+<p>Sealing writes a fresh canonical snapshot and ends the session for
+vault <code>{{.Dashboard.TabVaultName}}</code>.</p>
+<form method="post" action="/vault/{{.Dashboard.TabVaultName}}/seal">
+    <label>
+        Seal message:
+        <input type="text" name="message" size="50" placeholder="what changed this session" required>
+    </label>
+    <button type="submit">Seal vault</button>
+</form>
 {{- end}}
 
 <h2>Open sessions</h2>

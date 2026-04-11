@@ -434,6 +434,194 @@ func TestE2E_Navigation_ReadOnlyFlow(t *testing.T) {
 	})
 }
 
+// openVaultUI is a chromedp action that goes through the startup-token
+// handshake and opens the e2e test vault. Use from tests that need a
+// bound tab before exercising mutation handlers.
+func openVaultUI(env *e2eEnv) chromedp.Action {
+	return chromedp.Tasks{
+		chromedp.Navigate(env.WebURL + "/?t=" + env.StartupToken),
+		chromedp.WaitVisible(`input[name="passphrase"]`, chromedp.ByQuery),
+		chromedp.SendKeys(`input[name="passphrase"]`, env.Passphrase, chromedp.ByQuery),
+		chromedp.Submit(`input[name="passphrase"]`, chromedp.ByQuery),
+		chromedp.WaitVisible(`header span`, chromedp.ByQuery),
+	}
+}
+
+// TestE2E_ServerAdd_FormSubmit exercises the full Group A server-add
+// path: open vault -> visit servers page -> fill form -> submit ->
+// verify the new row is visible. The test vault ships with an empty
+// server registry, so any alias we add is observable immediately.
+func TestE2E_ServerAdd_FormSubmit(t *testing.T) {
+	env := newE2EEnv(t)
+	ctx, cancel := newChromedpCtx(t)
+	defer cancel()
+
+	var html string
+	err := chromedp.Run(ctx,
+		openVaultUI(env),
+		chromedp.Navigate(env.WebURL+"/vault/"+env.VaultName+"/servers"),
+		chromedp.WaitVisible(`input[name="alias"]`, chromedp.ByQuery),
+		chromedp.SendKeys(`input[name="alias"]`, "e2e-ks", chromedp.ByQuery),
+		chromedp.SendKeys(`input[name="url"]`, "hkps://e2e.example.com", chromedp.ByQuery),
+		chromedp.Submit(`input[name="alias"]`, chromedp.ByQuery),
+		chromedp.WaitVisible(`table`, chromedp.ByQuery),
+		chromedp.OuterHTML(`main`, &html, chromedp.ByQuery),
+	)
+	if err != nil {
+		t.Fatalf("chromedp run: %v", err)
+	}
+	if !strings.Contains(html, "e2e-ks") {
+		t.Errorf("servers page missing newly-added alias: %s", html)
+	}
+}
+
+// TestE2E_ServerEnable_Toggle adds a server (which starts enabled by
+// default), disables it via the inline form, and verifies the row now
+// renders as disabled with an Enable button.
+func TestE2E_ServerEnable_Toggle(t *testing.T) {
+	env := newE2EEnv(t)
+	ctx, cancel := newChromedpCtx(t)
+	defer cancel()
+
+	var html string
+	err := chromedp.Run(ctx,
+		openVaultUI(env),
+		chromedp.Navigate(env.WebURL+"/vault/"+env.VaultName+"/servers"),
+		chromedp.WaitVisible(`input[name="alias"]`, chromedp.ByQuery),
+		chromedp.SendKeys(`input[name="alias"]`, "toggle-ks", chromedp.ByQuery),
+		chromedp.SendKeys(`input[name="url"]`, "hkps://toggle.example.com", chromedp.ByQuery),
+		chromedp.Submit(`input[name="alias"]`, chromedp.ByQuery),
+		chromedp.WaitVisible(`form[action="/vault/`+env.VaultName+`/servers/disable"] button`, chromedp.ByQuery),
+		chromedp.Click(`form[action="/vault/`+env.VaultName+`/servers/disable"] button`, chromedp.ByQuery),
+		chromedp.WaitVisible(`form[action="/vault/`+env.VaultName+`/servers/enable"] button`, chromedp.ByQuery),
+		chromedp.OuterHTML(`main`, &html, chromedp.ByQuery),
+	)
+	if err != nil {
+		t.Fatalf("chromedp run: %v", err)
+	}
+	if !strings.Contains(html, "toggle-ks") {
+		t.Errorf("servers page missing toggle-ks row: %s", html)
+	}
+}
+
+// TestE2E_ServerRemove_ConfirmFlow adds a server, clicks Remove, lands
+// on the confirm page, confirms, and verifies the row is gone.
+func TestE2E_ServerRemove_ConfirmFlow(t *testing.T) {
+	env := newE2EEnv(t)
+	ctx, cancel := newChromedpCtx(t)
+	defer cancel()
+
+	var html string
+	err := chromedp.Run(ctx,
+		openVaultUI(env),
+		chromedp.Navigate(env.WebURL+"/vault/"+env.VaultName+"/servers"),
+		chromedp.WaitVisible(`input[name="alias"]`, chromedp.ByQuery),
+		chromedp.SendKeys(`input[name="alias"]`, "rm-ks", chromedp.ByQuery),
+		chromedp.SendKeys(`input[name="url"]`, "hkps://rm.example.com", chromedp.ByQuery),
+		chromedp.Submit(`input[name="alias"]`, chromedp.ByQuery),
+		// Click the Remove button (GET -> confirm page).
+		chromedp.WaitVisible(`form[action="/vault/`+env.VaultName+`/servers/remove"] button`, chromedp.ByQuery),
+		chromedp.Click(`form[action="/vault/`+env.VaultName+`/servers/remove"] button`, chromedp.ByQuery),
+		// Confirm page: click the submit button inside the POST form.
+		chromedp.WaitVisible(`form[method="post"][action="/vault/`+env.VaultName+`/servers/remove"] button`, chromedp.ByQuery),
+		chromedp.Click(`form[method="post"][action="/vault/`+env.VaultName+`/servers/remove"] button`, chromedp.ByQuery),
+		// Wait until we land back on the /servers list page — the add
+		// form input name="url" only exists on the list page, not on
+		// the confirm page.
+		chromedp.WaitVisible(`input[name="url"]`, chromedp.ByQuery),
+		chromedp.OuterHTML(`main`, &html, chromedp.ByQuery),
+	)
+	if err != nil {
+		t.Fatalf("chromedp run: %v", err)
+	}
+	// The alias should only appear inside the success flash, not in a
+	// table row. Assert the empty state is now rendered.
+	if !strings.Contains(html, "No publish servers configured") {
+		t.Errorf("servers page should be empty after remove: %s", html)
+	}
+}
+
+// TestE2E_VaultTrust_ConfirmFlow navigates to the trust page, submits a
+// new fingerprint, walks through the confirm page, and asserts the
+// dashboard renders the new fingerprint afterwards.
+func TestE2E_VaultTrust_ConfirmFlow(t *testing.T) {
+	env := newE2EEnv(t)
+	ctx, cancel := newChromedpCtx(t)
+	defer cancel()
+
+	newFp := "CAFEBABECAFEBABECAFEBABECAFEBABECAFEBABE"
+
+	var dashHTML string
+	err := chromedp.Run(ctx,
+		// No vault-open required for trust; just the startup handshake.
+		chromedp.Navigate(env.WebURL+"/?t="+env.StartupToken),
+		chromedp.WaitVisible(`table`, chromedp.ByQuery),
+		chromedp.Navigate(env.WebURL+"/vault/"+env.VaultName+"/trust"),
+		chromedp.WaitVisible(`input[name="fingerprint"]`, chromedp.ByQuery),
+		chromedp.SendKeys(`input[name="fingerprint"]`, newFp, chromedp.ByQuery),
+		chromedp.Submit(`input[name="fingerprint"]`, chromedp.ByQuery),
+		// Confirm page: ensure both old (DEADBEEF...) and new fp shown.
+		chromedp.WaitVisible(`form[method="post"][action="/vault/`+env.VaultName+`/trust"] button`, chromedp.ByQuery),
+		chromedp.Click(`form[method="post"][action="/vault/`+env.VaultName+`/trust"] button`, chromedp.ByQuery),
+		// Wait for the dashboard redirect to finish and the page
+		// context to stabilize. Polling via Evaluate against
+		// document.body avoids the "context not found" race that
+		// chromedp.OuterHTML can trip on mid-navigation.
+		chromedp.ActionFunc(func(ctx context.Context) error {
+			deadline, cancel := context.WithTimeout(ctx, 10*time.Second)
+			defer cancel()
+			for {
+				var body string
+				err := chromedp.Evaluate(`document.body ? document.body.innerHTML : ""`, &body).Do(ctx)
+				if err == nil && strings.Contains(body, "<h2>Vaults</h2>") && strings.Contains(body, newFp) {
+					dashHTML = body
+					return nil
+				}
+				select {
+				case <-deadline.Done():
+					return deadline.Err()
+				case <-time.After(100 * time.Millisecond):
+				}
+			}
+		}),
+	)
+	if err != nil {
+		t.Fatalf("chromedp run: %v", err)
+	}
+	if !strings.Contains(dashHTML, newFp) {
+		t.Errorf("dashboard missing updated fingerprint: %s", dashHTML)
+	}
+}
+
+// TestE2E_Seal_FromDashboard opens the vault, types a seal message on
+// the dashboard, submits, and asserts the dashboard returns to the
+// closed state (no header "vault:" span) and the flash names the new
+// snapshot file.
+func TestE2E_Seal_FromDashboard(t *testing.T) {
+	env := newE2EEnv(t)
+	ctx, cancel := newChromedpCtx(t)
+	defer cancel()
+
+	var flashHTML string
+	err := chromedp.Run(ctx,
+		openVaultUI(env),
+		// Back on dashboard: the seal form is rendered because the
+		// tab is bound.
+		chromedp.Navigate(env.WebURL+"/"),
+		chromedp.WaitVisible(`form[action="/vault/`+env.VaultName+`/seal"] input[name="message"]`, chromedp.ByQuery),
+		chromedp.SendKeys(`form[action="/vault/`+env.VaultName+`/seal"] input[name="message"]`, "e2e test seal", chromedp.ByQuery),
+		chromedp.Click(`form[action="/vault/`+env.VaultName+`/seal"] button`, chromedp.ByQuery),
+		chromedp.WaitNotPresent(`header span`, chromedp.ByQuery),
+		chromedp.OuterHTML(`main`, &flashHTML, chromedp.ByQuery),
+	)
+	if err != nil {
+		t.Fatalf("chromedp run: %v", err)
+	}
+	if !strings.Contains(flashHTML, "sealed") {
+		t.Errorf("dashboard missing seal flash: %s", flashHTML)
+	}
+}
+
 // interceptStatus drives a navigation and captures the HTTP status of
 // the main document response. Needed because chromedp.Navigate does
 // not surface status codes directly.

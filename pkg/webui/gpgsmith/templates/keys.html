@@ -14,6 +14,7 @@
             <th>Created</th>
             <th>Expires</th>
             <th>Card</th>
+            <th>Actions</th>
         </tr>
     </thead>
     <tbody>
@@ -26,6 +27,16 @@
             <td>{{.Created}}</td>
             <td>{{template "dash" .Expires}}</td>
             <td>{{template "dash" .CardSerial}}</td>
+            <td>
+                {{- if hasC .Usage}}
+                <span class="muted">primary</span>
+                {{- else}}
+                <form class="inline" method="get" action="/vault/{{$.VaultName}}/keys/revoke">
+                    <input type="hidden" name="key_id" value="{{.KeyID}}">
+                    <button class="danger" type="submit">Revoke</button>
+                </form>
+                {{- end}}
+            </td>
         </tr>
         {{- end}}
     </tbody>

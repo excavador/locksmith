@@ -1,6 +1,13 @@
 {{define "servers"}}
 {{template "header" .}}
 <h2>Keyservers</h2>
+
+<form class="inline" method="post" action="/vault/{{.VaultName}}/servers/add">
+    <label>Alias: <input type="text" name="alias" size="16" required></label>
+    <label>URL: <input type="text" name="url" size="40" required placeholder="hkps://keys.example.com"></label>
+    <button type="submit">Add keyserver</button>
+</form>
+
 {{- if not .Servers.Servers}}
 <p class="empty">No publish servers configured.</p>
 {{- else}}
@@ -11,6 +18,7 @@
             <th>Type</th>
             <th>URL</th>
             <th>Enabled</th>
+            <th>Actions</th>
         </tr>
     </thead>
     <tbody>
@@ -20,6 +28,23 @@
             <td>{{.Type}}</td>
             <td class="mono">{{.URL}}</td>
             <td>{{if .Enabled}}yes{{else}}no{{end}}</td>
+            <td>
+                {{- if .Enabled}}
+                <form class="inline" method="post" action="/vault/{{$.VaultName}}/servers/disable">
+                    <input type="hidden" name="alias" value="{{.Alias}}">
+                    <button type="submit">Disable</button>
+                </form>
+                {{- else}}
+                <form class="inline" method="post" action="/vault/{{$.VaultName}}/servers/enable">
+                    <input type="hidden" name="alias" value="{{.Alias}}">
+                    <button type="submit">Enable</button>
+                </form>
+                {{- end}}
+                <form class="inline" method="get" action="/vault/{{$.VaultName}}/servers/remove">
+                    <input type="hidden" name="alias" value="{{.Alias}}">
+                    <button class="danger" type="submit">Remove</button>
+                </form>
+            </td>
         </tr>
         {{- end}}
     </tbody>

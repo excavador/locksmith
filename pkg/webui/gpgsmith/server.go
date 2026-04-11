@@ -32,6 +32,21 @@ type (
 		ServerList(ctx context.Context, sessionToken string) (*v1.ListServersResponse, error)
 		ServerLookup(ctx context.Context, sessionToken string) (*v1.LookupResponse, error)
 		AuditShow(ctx context.Context, sessionToken string, last int32) (*v1.ShowResponse, error)
+
+		// Mutations wired by v0.6.0 (Group A).
+		VaultSeal(ctx context.Context, sessionToken, message string) (*v1.SealResponse, error)
+		VaultTrust(ctx context.Context, vaultName, fingerprint string) error
+
+		KeyRevoke(ctx context.Context, sessionToken, keyID string) error
+
+		IdentityAdd(ctx context.Context, sessionToken, uid string) error
+		IdentityRevoke(ctx context.Context, sessionToken, uid string) error
+		IdentityPrimary(ctx context.Context, sessionToken, uid string) error
+
+		ServerAdd(ctx context.Context, sessionToken, alias, url string) error
+		ServerRemove(ctx context.Context, sessionToken, alias string) error
+		ServerEnable(ctx context.Context, sessionToken, alias string) error
+		ServerDisable(ctx context.Context, sessionToken, alias string) error
 	}
 
 	// Config holds Server construction parameters.
