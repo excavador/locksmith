@@ -2,29 +2,24 @@
 
 ## Unreleased
 
-### Fixed
+## v0.4.0 - 2026-04-08
 
-- **`gpg --card-status` now succeeds even when another `scdaemon` already
-  holds the YubiKey.** On systems without `pcscd` (where `scdaemon` uses
-  its internal CCID driver via libusb), only one `scdaemon` at a time can
-  claim the OpenPGP applet. A typical Linux desktop has a long-running
-  `gpg-agent` for `~/.gnupg` (often via `enable-ssh-support` and the
-  systemd `gpg-agent.socket` unit) whose `scdaemon` claims the card on
-  first use. When gpgsmith opened a vault session and tried to call
-  `gpg --card-status` against the freshly-decrypted GNUPGHOME in
-  `/dev/shm`, the new `scdaemon` couldn't acquire the card and returned
-  `gpg: selecting card failed: No such device`. `gpgsmith card discover`,
-  `card provision`, `card rotate`, etc. all hit this error.
+This release replaces gpgsmith's single-process CLI architecture with a
+**daemon + thin clients** model. A long-running `gpgsmith daemon` process
+holds open vaults in memory across CLI invocations; every `gpgsmith` command
+is now a thin ConnectRPC client that talks to the daemon over a per-user
+Unix socket. The interactive shell wrapper is gone, the env-var session
+state is gone, and commands that follow a `vault open` are sub-millisecond
+RPCs instead of full vault decrypt cycles.
 
-  `pkg/gpg.Client.CardStatus` now detects this specific failure mode and
-  recovers automatically: it runs `gpgconf --kill scdaemon` to terminate
-  every `scdaemon` under the current user account, then retries the
-  `--card-status` call once. The killed `scdaemon` instances respawn on
-  the next gpg call from any homedir, so the user's normal gpg flow is
-  briefly interrupted but no permanent state is lost.
+The daemon also adds **idle auto-seal-to-ephemeral with resume on next
+open**: after 5 minutes of no activity, the daemon flushes the in-memory
+workdir to an encrypted `.session-<host>` file pair on disk and drops the
+session state from memory. The next `vault open` for the same vault detects
+the file and prompts to resume.
 
-  No user-facing change in behavior — `gpgsmith card discover` "just
-  works" now.
+This is a breaking change for anyone using the old `eval $(gpgsmith vault
+open)` shell pattern. See **Migration** below.
 
 ### Breaking
 
@@ -53,6 +48,14 @@
 
 ### Added
 
+#### New CLI commands
+
+- **`gpgsmith daemon {start,stop,status,restart}`** — manage the
+  background daemon explicitly. `start` runs `--foreground` in-process
+  or backgrounds itself via `setpgid` detach. `status` follows the
+  `systemctl status --user` exit-code convention (`0` running,
+  `3` inactive, `1` error). The daemon binary is the same `gpgsmith`
+  binary.
 - **`gpgsmith vault status`** — shows which vaults the daemon currently
   has open and which ones have a recoverable ephemeral on disk ready to
   be resumed.
@@ -66,10 +69,9 @@
   registry entry, writes the vault directory, encrypts an empty initial
   snapshot, and opens a session on it. Follow up with `gpgsmith keys
   create` to generate the master key.
-- **`VaultService.Create` RPC** — the wire surface backing
-  `gpgsmith vault create` and `gpgsmith setup`.
-- **Real `VaultService.Export` / `Backend.ExportVault` implementation**
-  on the daemon side (was a stub in commit 5b).
+
+#### Behavior
+
 - **Auto-spawn daemon on every user-facing command.** If the daemon is
   not running when you invoke a CLI command, a detached copy starts
   automatically; the first command pays the startup cost and subsequent
@@ -78,6 +80,119 @@
   daemon flushes the in-memory workdir to the encrypted ephemeral file
   pair and drops the session state from memory, allowing the next
   `vault open` on the same vault to offer to resume.
+- **Vault registry: multi-vault support in `~/.config/locksmith/config.yaml`.**
+  The config file supports a `vaults:` list with named entries plus a
+  `default:` selector, alongside the existing single-vault `vault_dir:`
+  form. Both forms remain valid and may coexist; the legacy `vault_dir:`
+  is exposed as a synthetic registry entry named `default`. New global
+  flag `--vault <name>` selects an entry from the registry.
+- **TOFU master-key trust.** First time `vault open` decrypts a vault,
+  the daemon reads `master_fp` from the embedded `gpgsmith.yaml` and
+  records it as `trusted_master_fp` in the registry entry. Subsequent
+  opens verify the embedded fingerprint matches and refuse loudly with
+  `MasterKeyMismatchError` on mismatch (the loud security signal that
+  the snapshot was either replaced by an attacker with write access to
+  the vault directory, or generated from a fresh setup that overwrote
+  your real vault).
+- **Process hardening at daemon startup.** The daemon calls
+  `prctl(PR_SET_DUMPABLE, 0)` on Linux (`ptrace(PT_DENY_ATTACH)` on
+  macOS) plus `setrlimit(RLIMIT_CORE, 0)`. This blocks `ptrace`,
+  `process_vm_readv`, and `/proc/<pid>/{mem,maps,root}` reads from
+  same-user processes (the kernel re-owns those files to root once
+  dumpable=0), and prevents core dumps from leaking heap on crash.
+  The single biggest defense available without root or systemd.
+- **Loopback pinentry mode is enforced** in every per-session
+  GNUPGHOME. The daemon writes `gpg.conf` (`pinentry-mode loopback`)
+  and `gpg-agent.conf` (`allow-loopback-pinentry`) into the
+  freshly-decrypted workdir, then passes the vault passphrase to gpg
+  over a private OS pipe (fd 3 via `ExtraFiles`). No GUI pinentry
+  popup; no dependency on `pinentry-tty` / `pinentry-curses` being
+  installed; works identically on desktops, headless servers,
+  containers, and CI runners.
+
+#### New packages and architecture
+
+- **`pkg/gpgsmith` — the kernel.** Owns the `Session` type, ephemeral
+  session file convention, TOFU + heartbeat + auto-seal-to-ephemeral
+  lifecycle, and process hardening primitives. Importable by
+  third-party Go code that wants to script against the same surface
+  the daemon exposes.
+- **`pkg/daemon` — the daemon runtime.** Implements `wire.Backend`
+  against the kernel. In-process broker with per-topic ring buffer
+  (~80 LOC, no external dependencies, no NATS) backs the future
+  per-job event streaming. Unix socket bind with stale-socket
+  recovery (the standard connect-then-EConnRefused-then-unlink-then-bind
+  idiom). Per-session idle timer fires `Session.AutoSealAndDrop` on
+  expiry and emits a `session.ended` event. Graceful shutdown
+  auto-seals every open session within a configurable budget.
+- **`pkg/wire` — the ConnectRPC adapter layer.** Hand-written server
+  handlers (one per service), typed client wrapper that bundles all
+  eight generated `*ServiceClient` interfaces, proto↔kernel type
+  conversion. The package is named `wire` rather than `rpc` because
+  Go's stdlib has `net/rpc` and revive flags the shadowed name. Eight
+  Connect services cover the full kernel surface: `DaemonService`,
+  `VaultService`, `KeyService`, `IdentityService`, `CardService`,
+  `ServerService`, `AuditService`, and `EventService`.
+- **`pkg/cli/gpgsmith` — the CLI frontend.** Every command is a thin
+  `wire.Client` call that auto-spawns the daemon via `EnsureDaemon`
+  and renders the response with `text/tabwriter`. Sibling packages
+  `pkg/webui/gpgsmith` and `pkg/tui/gpgsmith` are reserved for the
+  future web UI and TUI frontends.
+- **`pkg/gen/gpgsmith/v1` — generated proto stubs.** Committed to git
+  so `go install` and CI work without buf. Regenerate with
+  `just generate` (which runs `go generate ./pkg/gen` → `buf generate`).
+  The buf, protoc-gen-go, and protoc-gen-connect-go binaries come
+  from `devbox.json` so contributors get them via `direnv allow`.
+- **`proto/gpgsmith/v1/*.proto` — wire schemas.** Source of truth for
+  the daemon API.
+
+### Fixed
+
+- **`gpg --card-status` now succeeds even when another `scdaemon` already
+  holds the YubiKey.** On systems without `pcscd` (where `scdaemon` uses
+  its internal CCID driver via libusb), only one `scdaemon` at a time can
+  claim the OpenPGP applet. A typical Linux desktop has a long-running
+  `gpg-agent` for `~/.gnupg` (often via `enable-ssh-support` and the
+  systemd `gpg-agent.socket` unit) whose `scdaemon` claims the card on
+  first use. When gpgsmith opened a vault session and tried to call
+  `gpg --card-status` against the freshly-decrypted GNUPGHOME in
+  `/dev/shm`, the new `scdaemon` couldn't acquire the card and returned
+  `gpg: selecting card failed: No such device`. `gpgsmith card discover`,
+  `card provision`, `card rotate`, etc. all hit this error.
+
+  `pkg/gpg.Client.CardStatus` now detects this specific failure mode and
+  recovers automatically: it runs `gpgconf --kill scdaemon` to terminate
+  every `scdaemon` under the current user account, then retries the
+  `--card-status` call once. The killed `scdaemon` instances respawn on
+  the next gpg call from any homedir, so the user's normal gpg flow is
+  briefly interrupted but no permanent state is lost.
+
+- **`parseUIDs` reports the original creation date, not the latest
+  re-signing date.** Field 5 of gpg's `uid:` colon record reflects the
+  LATEST self-signature, which gpg refreshes whenever the UID is
+  touched (`--quick-set-primary-uid` rewrites the binding signature
+  with today's timestamp). Naively trusting it made a UID created in
+  2022 look like it was created today right after a primary toggle.
+  The parser now always walks `sig:` records following each `uid:`
+  line and picks the EARLIEST one as the authoritative origin date.
+
+- **`vault list` and `vault status` no longer return duplicate rows.**
+  After TOFU first-use writes a `vaults:` registry entry to the user's
+  config, the legacy `vault_dir:` field is intentionally preserved for
+  backward compat — but both forms point at the same path. The daemon
+  was returning the same vault twice. The new `mergeVaultEntries`
+  helper deduplicates registry vs legacy entries by name AND by path.
+
+- **Per-session `gpg-agent` and `scdaemon` are killed on session end.**
+  Previously every `Seal` / `Discard` / `AutoSealAndDrop` left an
+  orphan gpg-agent + scdaemon pair pointing at a workdir we were
+  about to remove from `/dev/shm`. They accumulated in the user's
+  process table over time. Session end paths now run
+  `gpgconf --homedir <workdir> --kill all` before removing the workdir.
+
+- **`gpgsmith vault snapshots` works without an open session.** Listing
+  canonical filenames is a stateless directory read; the daemon no
+  longer requires a session lookup for it.
 
 ### Removed
 
@@ -90,6 +205,14 @@
   `runInteractiveSession` are deleted. `promptLine`, `readPassphrase`,
   and `readPassphraseWithConfirm` remain as small terminal helpers.
 
+### Changed (internal architecture)
+
+- **CLI implementation moved from `pkg/gpgsmith` to `pkg/cli/gpgsmith`**
+  to free up `pkg/gpgsmith` for the kernel package.
+- **`vault.Config.Resolve(name)` and `vault.Entry`** added to
+  `pkg/vault` to handle the multi-vault registry resolution with
+  backward-compatible precedence over the legacy `vault_dir:` form.
+
 ### Migration
 
 - Remove `eval $(gpgsmith vault open ...)` or equivalent patterns from
@@ -97,279 +220,13 @@
 - The daemon binary is the same `gpgsmith` binary. You can start it
   explicitly with `gpgsmith daemon start`, or let auto-spawn handle it
   on first use.
-
-### Added (earlier, from prior commits)
-
-- **`pkg/wire` ConnectRPC adapter layer.** The hand-written ConnectRPC
-  layer that wraps the generated stubs from `pkg/gen` and adapts them
-  to the kernel API: server handlers (one per service), a typed client
-  wrapper that bundles all eight service clients, and a proto↔kernel
-  type-conversion layer. The package is named `wire` rather than `rpc`
-  because Go's standard library already has `net/rpc` and golangci-lint's
-  revive var-naming rule flags the shadowed name; the new name also
-  clearly conveys "this is the wire format / wire protocol layer".
-
-  - `Backend` interface — the contract that handlers call into. Exposes
-    the gpgsmith kernel surface in a session-aware, daemon-style API
-    where every session-bearing method takes a vault name. Implemented
-    by the daemon (forthcoming).
-  - One handler file per service (`handlers_daemon.go`,
-    `handlers_vault.go`, `handlers_key.go`, `handlers_identity.go`,
-    `handlers_card.go`, `handlers_server.go`, `handlers_audit.go`,
-    `handlers_event.go`). Each handler embeds the corresponding
-    `Unimplemented*ServiceHandler` from the generated package and
-    delegates to a `Backend` method, translating proto types in/out via
-    `mapping.go`.
-  - `mapping.go` — proto↔kernel type converters. The only place in the
-    codebase where protobuf types appear in hand-written code; the rest
-    of the codebase sees only kernel-shaped Go values.
-  - `errors.go` — translates kernel errors into Connect-coded errors:
-    `MasterKeyMismatchError` → `CodeFailedPrecondition`,
-    `LockContentionError` → `CodeAlreadyExists`,
-    `context.Canceled` → `CodeCanceled`, everything else → `CodeInternal`.
-  - `Server` — bundles all handlers into a single `http.Handler` that
-    the daemon mounts on its Unix socket.
-  - `Client` — typed client wrapper that bundles all eight generated
-    `*ServiceClient` interfaces. Constructors:
-    `NewUnixSocketClient(path)` for the production daemon connection
-    and `NewHTTPClient(client, baseURL)` for tests using
-    `httptest.Server`.
-  - Seven round-trip tests using an in-process Connect server with a
-    fake `Backend`: daemon status, identity list (with revoked UID),
-    identity add, backend error propagation as Connect codes,
-    Unix-socket client construction, server handler construction, and
-    HTTP routing.
-
-  Not yet wired into a real daemon process — `pkg/daemon` is the next
-  commit. The wire layer is complete and tested in isolation against
-  the fake backend.
-
-- **Protobuf schema and ConnectRPC code generation foundation** for the
-  upcoming gpgsmith daemon. The wire format is the dedicated package
-  `gpgsmith.v1` defined under `proto/gpgsmith/v1/`. Eight services cover
-  the full kernel surface: `DaemonService` (status, shutdown, list
-  sessions), `VaultService` (list, status, open, resume, seal, discard,
-  snapshots, import, export, trust), `KeyService` (create, generate,
-  list, revoke, export, ssh-pubkey, status), `IdentityService` (list,
-  add, revoke, primary), `CardService` (provision, rotate, revoke,
-  inventory, discover), `ServerService` (publish-target registry +
-  publish + lookup), `AuditService` (show), and `EventService`
-  (server-streaming pub/sub for job progress and "touch your YubiKey"
-  prompts).
-
-  Tooling:
-
-  - `devbox.json` adds `buf`, `protoc-gen-go`, and `protoc-gen-connect-go`
-    so contributors get the toolchain via `direnv allow` with no manual
-    install steps.
-  - `proto/buf.yaml` configures the buf module with the STANDARD lint
-    rules (with two stylistic naming exceptions documented inline) plus
-    file-level breaking-change checks.
-  - `proto/buf.gen.yaml` (v2 schema) drives codegen via the local
-    `protoc-gen-go` and `protoc-gen-connect-go` plugins delivered by
-    devbox. Output goes to `pkg/gen/gpgsmith/v1/` (message types) and
-    `pkg/gen/gpgsmith/v1/gpgsmithv1connect/` (service interfaces, client
-    constructors, handler factories).
-  - `pkg/gen/gen.go` holds the `//go:generate buf generate ...` directive
-    so `go generate ./pkg/gen` regenerates everything.
-  - **Generated code is committed to git** so `go install`, CI, and
-    contributors who only touch Go do not need buf.
-  - `just generate` regenerates the wire schema.
-  - `just lint-proto` runs `buf lint`, separate from `just lint` so a
-    misformatted .proto file does not break the Go developer feedback loop.
-  - `just generate-check` is a CI helper that runs `just generate` and
-    fails if the working tree is dirty afterwards (catches missing
-    regeneration after .proto edits).
-
-  No new functionality or behavior change in this commit — purely setting
-  up the wire format. The kernel API and existing CLI are untouched.
-  The schema and generated stubs become callable in the next commit when
-  the daemon and the `pkg/rpc` adapter package land.
-
-- **Vault registry: multi-vault support in `~/.config/locksmith/config.yaml`.**
-  The config file now supports a `vaults:` list with named entries plus a
-  `default:` selector, alongside the existing single-vault `vault_dir:` form.
-  Both forms remain valid and may coexist; the legacy `vault_dir:` is exposed
-  as a synthetic registry entry named `default`.
-
-  ```yaml
-  vaults:
-    - name: personal
-      path: ~/Dropbox/Private/vault
-      identity: ~/.config/locksmith/personal.age   # optional, per-vault
-    - name: work
-      path: ~/work/vault
-  default: personal
-  ```
-
-  New global flag `--vault <name>` selects an entry from the registry.
-  `--vault-dir <path>` still works for tests and one-off scripted runs and
-  takes precedence over the registry. Per-entry `identity` and `gpg_binary`
-  fields override the top-level legacy fields when set.
-
-  `vault config show` now prints the full registry when present.
-  `vault config set` continues to operate on the legacy top-level fields;
-  registry editing is done by editing the YAML directly for now.
-
-### Changed (internal, no user-visible behavior change)
-
-- **CLI implementation moved from `pkg/gpgsmith` to `pkg/cli/gpgsmith`** to free
-  up `pkg/gpgsmith` for the upcoming kernel package. The new layout is:
-  `pkg/gpg`, `pkg/vault`, `pkg/audit` (primitives) → `pkg/gpgsmith` (kernel,
-  forthcoming) → `pkg/cli/gpgsmith` (CLI frontend). Future siblings:
-  `pkg/cli/pkismith` (when pkismith ships), `pkg/webui/gpgsmith`,
-  `pkg/tui/gpgsmith`. Pure mechanical rename — no behavior change.
-
-- **`vault.Config.Resolve(name)` and `vault.Entry`** added to `pkg/vault`.
-  Resolves a vault name to an effective entry, handling all combinations of
-  legacy + registry forms with backward-compatible precedence. Tests cover
-  every resolution path.
-
-- **`Session` type, TOFU, and process hardening in `pkg/gpgsmith`.** This is the
-  first piece of the kernel API that consumes the ephemeral file convention
-  from the previous commit and ties together all the lower-level pieces
-  (`pkg/vault`, `pkg/gpg`, agent config, ephemeral helpers).
-
-  **`Session` lifecycle**:
-
-  - `OpenSession(ctx, vault, entry, opts)` — decrypts the latest canonical
-    snapshot of `entry` into a tmpfs workdir, writes loopback `gpg.conf`/
-    `gpg-agent.conf`, constructs an authenticated `gpg.Client`, performs the
-    TOFU check (see below), writes the initial `.info` sidecar with status
-    `active`, and starts a heartbeat goroutine. Returns an `OpenSessionResult`
-    with the `Session` plus a `TOFUFingerprint` side-channel that the caller
-    persists into the vault registry on first use.
-  - `Session.Seal(ctx, message)` — explicit seal: writes a new canonical
-    snapshot, deletes the ephemeral file pair, stops the heartbeat, marks
-    the session closed.
-  - `Session.Discard(ctx)` — explicit discard: removes the workdir, deletes
-    the ephemeral file pair, stops the heartbeat, marks the session closed.
-  - `Session.AutoSealAndDrop(ctx)` — idle-timeout end-path: forces a final
-    flush of the workdir to the encrypted `.session-<host>` ephemeral file,
-    marks `.info` status as `idle-sealed`, drops the in-memory workdir, and
-    leaves the ephemeral pair on disk so the next `OpenSession` on the
-    same vault can offer to resume.
-  - `Session.MarkChanged()` — bumps an atomic mutation counter that the
-    heartbeat goroutine uses to decide whether to re-flush the encrypted
-    ephemeral state on each tick.
-  - `Session.IsClosed()` — state-machine probe.
-
-  **Heartbeat goroutine** runs for the lifetime of an open Session. Default
-  tick interval is 30 seconds (`DefaultHeartbeatInterval`). Each tick:
-  refreshes the `.info` sidecar with a fresh `last_heartbeat` timestamp;
-  if the mutation generation has advanced since the last flush, also
-  re-flushes the workdir to the encrypted `.session-<host>` file.
-
-  **TOFU master-key trust**: a new `TrustedMasterFP` field on `vault.Entry`
-  records the master fingerprint of the vault on first use. `OpenSession`
-  reads `gpgsmith.yaml` from the decrypted workdir; if the entry has no
-  trusted fingerprint yet, it returns the discovered one in
-  `OpenSessionResult.TOFUFingerprint` for the caller to persist; if the
-  entry has a trusted fingerprint and it does NOT match, `OpenSession`
-  refuses with `MasterKeyMismatchError` (a typed error with
-  `IsMasterKeyMismatch(err)` test) carrying expected/found/snapshot for
-  the loud user-facing message:
-
-  ```
-  vault "personal": master key mismatch — expected ABC... found XYZ... in
-    20260410T143012Z_setup.tar.age
-  This snapshot was either replaced by an attacker with write access to
-  the vault directory, or generated from a fresh setup that overwrote
-  your real vault.
-  If you legitimately rotated your master key, update the trust anchor
-  with: gpgsmith vault trust personal XYZ...
-  ```
-
-  **`vault.SealEphemeral(ctx, workdir, targetPath)`** is a new method on
-  `*vault.Vault` that tars and encrypts a workdir into a caller-supplied
-  target path (the `.session-<host>` ephemeral file location), reusing the
-  vault's encryption identity. Atomic: temp file + rename so concurrent
-  readers see either the previous version or the new one, never a half
-  write. Unlike `Seal`, it does NOT remove the workdir or generate a
-  timestamped canonical name.
-
-  **Process hardening** (`HardenProcess`): cross-platform best-effort
-  same-user attack mitigations, intended to be called once at daemon
-  startup. On Linux: `prctl(PR_SET_DUMPABLE, 0)` (blocks ptrace,
-  process_vm_readv, and `/proc/<pid>/{mem,maps,root}` from non-root same-user
-  processes — the kernel re-owns those files to root) plus
-  `setrlimit(RLIMIT_CORE, 0)` (no core dumps leaking heap on crash). On
-  macOS: `ptrace(PT_DENY_ATTACH)` (the macOS analog of `PR_SET_DUMPABLE`)
-  plus `RLIMIT_CORE`. The function is exported but **not** called
-  automatically by `OpenSession` or any other kernel API: the daemon
-  binary's main() is responsible for opting in, because hardening is a
-  process-wide flag that would also affect tests and developer debugging.
-
-  **Twelve unit tests** cover the full lifecycle: open + discard, open
-  + seal, TOFU first-use, TOFU match, TOFU mismatch (verifies no
-  leftover files on the failed-open path), TOFU skip on key-less vaults,
-  double-end errors, MarkChanged generation counter, heartbeat
-  `.info` advancement, heartbeat-triggered ephemeral flush on mutation,
-  AutoSealAndDrop idle-path semantics, and `HardenProcess` idempotence.
-  Tests use a generous deadline-based polling helper to accommodate age's
-  scrypt KDF (~1 second per encrypt) without flakiness. Not yet wired into
-  the CLI; that lands when the daemon arrives.
-
-- **Ephemeral session file convention** in `pkg/gpgsmith`. Defines and implements
-  the on-disk shape of "session in progress" markers that the daemon will
-  write into the vault directory alongside canonical snapshots:
-
-  ```
-  <vault-dir>/20260410T143012Z_setup.tar.age                                 ← canonical (immutable)
-  <vault-dir>/20260410T143012Z_setup.tar.age.session-laptop.local            ← in-progress encrypted state
-  <vault-dir>/20260410T143012Z_setup.tar.age.session-laptop.local.info       ← liveness sidecar (plaintext)
-  ```
-
-  The base canonical filename is preserved in the suffix so the parent
-  relationship is visible at a glance, and **divergence detection becomes a
-  filename comparison**: if a session file references canonical X but a newer
-  canonical Y is in the same directory, the user has changes from another
-  machine that the in-progress session does not include.
-
-  The hostname suffix lets multiple machines (in a Dropbox/Syncthing-synced
-  vault directory) coexist without colliding on filenames. Each machine has
-  at most one in-progress session per vault, named after its own hostname.
-
-  `pkg/gpgsmith/ephemeral.go` provides:
-
-  - `SessionFilenamesFor(canonical, hostname)` — derive both filenames
-  - `ParseSessionFilename(name)` — split a name back into canonical + hostname
-  - `WriteEphemeralInfo` / `ReadEphemeralInfo` — atomic YAML read/write
-    for the `.info` sidecar (temp file + rename)
-  - `EphemeralInfo.IsStale(now)` — heartbeat-timestamp staleness check
-    (`StaleHeartbeatThreshold` = 90 seconds, generously larger than the
-    `HeartbeatInterval` = 30 seconds to tolerate sync delay)
-  - `ListEphemerals(vaultDir)` — find every `.session-<host>.info` in a
-    vault dir, parse each, return sorted by hostname; junk and unparseable
-    files are silently skipped
-  - `FindEphemeralFor(vaultDir, hostname)` — lookup by hostname
-  - `Ephemeral.IsDivergent(canonicalNames)` — compare canonical base
-    against the dir's canonical list, true if a newer one exists
-  - `DeleteEphemeralFiles` — idempotent cleanup of the file pair
-
-  11 unit tests covering filename round-trip, parser edge cases, atomic
-  write, mode-0600 permissions, multi-host listing, junk filtering,
-  staleness detection (including clock-skew futures), divergence detection
-  (no-other / older-only / newer-present / missing-canonical cases),
-  and idempotent deletion. Not yet wired into a Session type — that lands
-  in the next commit.
-
-- **New kernel package `pkg/gpgsmith` with vault lock primitive**
-  (`AcquireVaultLock`, `Lock.Release`, `LockContentionError`,
-  `ReadLockInfoFor`, `ForceUnlockVault`). Uses `flock(2)` so the kernel
-  automatically releases the lock when the holding process dies (even on
-  `SIGKILL`) — no stale-PID-file cleanup. A sidecar `.info` YAML file
-  records the holder's PID, source (`cli` / `ui` / `tui`), start time, and
-  hostname for diagnostic messages on contention. Lock files live under
-  `${XDG_RUNTIME_DIR}/gpgsmith/locks` on Linux and `${TMPDIR}/gpgsmith/locks`
-  on macOS, named by the SHA-256 of the absolute vault path so different
-  vaults at different paths get distinct locks. **Per-host only** — file-sync
-  setups (Dropbox, Syncthing) cannot be coordinated by this mechanism.
-  Eight unit tests cover acquire, release, contention, double-release,
-  re-acquire after release, distinct-vault independence, path-canonicalization
-  (a relative path contends with the same vault opened by absolute path),
-  force-unlock, and a subprocess test that proves kernel auto-release on
-  process exit. Not yet wired into the CLI; that lands in the next commit.
+- Existing vaults from prior versions Just Work — no conversion step.
+  The first `vault open` populates the TOFU trust anchor, the new
+  loopback `gpg.conf` and `gpg-agent.conf` get baked into the next
+  sealed snapshot, and subsequent opens are unchanged.
+- The `--vault` global flag is OPTIONAL when exactly one vault is open
+  in the daemon. REQUIRED when zero or two-or-more are open. The CLI
+  surfaces a clear error message if ambiguous.
 
 ## v0.3.0 - 2026-04-10
 

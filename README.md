@@ -225,7 +225,8 @@ pass `--vault <name>` on the root command.
 
 | Flag | Default | Description |
 |------|---------|-------------|
-| `--vault` | auto | Select which open vault to target when multiple are open |
+| `--vault` | auto | Select a vault by name from the registry |
+| `--vault-dir` | _(unset)_ | Override vault directory (ignores the registry; useful for tests) |
 | `--verbose` | `false` | Debug logging to stderr |
 | `--dry-run` | `false` | Print commands without executing |
 
@@ -255,9 +256,9 @@ know or care about encryption or storage.
 ```
 vault open  ->  find latest .tar.age -> decrypt -> untar -> tmpdir
                    |
-                GNUPGHOME = tmpdir (via subshell or env export)
+                daemon holds session (GNUPGHOME = tmpdir, in-memory)
                    |
-                perform GPG operations (generate / revoke / to-card / ...)
+                CLI RPCs -> daemon -> gpg --homedir tmpdir ...
                    |
 vault seal  ->  tar tmpdir -> encrypt -> write new .tar.age -> cleanup
 ```
@@ -312,8 +313,8 @@ This means:
   argv (`--passphrase`), environment, or disk file.
 - gpg-agent's cache (1 hour default, 8 hours max) covers a typical interactive
   session so the user isn't re-prompted.
-- Inside the interactive gpgsmith shell, `GPGSMITH_VAULT_KEY` is exported so
-  subsequent `gpgsmith` invocations inherit the passphrase transparently.
+- The passphrase stays inside the daemon process for the lifetime of the
+  session and is never exported into any client shell.
 
 ## Encryption
 
@@ -421,8 +422,9 @@ servers:
 2. Config files (vault config + GPG config after open)
 3. CLI flags
 
-No environment variables for configuration. `GNUPGHOME`, `GPGSMITH_VAULT_KEY`,
-and `GPGSMITH_SESSION` are env vars used as session state (not configuration).
+No environment variables for configuration. Session state (decrypted
+GNUPGHOME path, passphrase, open-vault map) lives in the daemon process,
+not in client-shell environment variables.
 
 ## Project Structure
 
@@ -433,10 +435,15 @@ locksmith/
 │   ├── vault/             encrypted snapshot storage (age + tar), shared
 │   ├── audit/             audit logging, shared
 │   ├── gpg/               GPG operations, inventory, card management
-│   └── gpgsmith/          CLI wiring (urfave/cli/v3)
+│   ├── gpgsmith/          session type, TOFU trust, process hardening
+│   ├── daemon/            long-running daemon: open-vault map, idle auto-seal
+│   ├── wire/              ConnectRPC adapter (server + client over UDS/h2c)
+│   ├── gen/               buf-generated protobuf + ConnectRPC stubs
+│   └── cli/gpgsmith/      CLI wiring (urfave/cli/v3), thin daemon client
+├── proto/                 protobuf schema (buf-managed)
 ├── testdata/              fixtures for GPG output parsing
 ├── Justfile               build/test/lint commands
-├── devbox.json            dev environment (Go, golangci-lint, just, goreleaser)
+├── devbox.json            dev environment (Go, golangci-lint, just, goreleaser, buf, protoc-gen-*)
 └── .goreleaser.yaml       release configuration
 ```
 
