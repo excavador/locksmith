@@ -7,8 +7,15 @@ build:
 test:
     go test ./...
 
+# Browser-driven end-to-end tests for pkg/webui/gpgsmith. Uses chromedp
+# with the devbox-provided Chromium. Tagged so it does not run on every
+# `just test` (the full suite takes ~30s even for a small number of
+# tests due to vault decrypt + browser startup).
+e2e:
+    go test -tags e2e -count=1 ./pkg/webui/gpgsmith/...
+
 lint:
-    golangci-lint run
+    golangci-lint run --build-tags e2e
 
 fmt:
     gofmt -w .

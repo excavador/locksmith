@@ -43,3 +43,6 @@ jobs:
 
       - name: Build
         run: devbox run -- just build
+
+      - name: E2E (headless Chromium via chromedp)
+        run: devbox run -- just e2e

@@ -2,6 +2,27 @@
 
 ## Unreleased
 
+### Added
+
+- **End-to-end browser tests for the web UI.** New
+  `pkg/webui/gpgsmith/e2e_test.go` (behind `//go:build e2e`) drives a
+  headless Chromium via `github.com/chromedp/chromedp` against a real
+  in-process daemon + wire server + web UI chain. Covers the full
+  read-only MVP flow: startup-token → cookie handshake, unauthenticated
+  401, wrong-passphrase flash, correct-passphrase vault open, keys /
+  identities / cards / audit page renders, servers-page HTMX lazy
+  swap, and vault discard. All tests share one chromium instance per
+  top-level `Test*` function via subtests, and the servers test ships
+  an empty server registry in the test vault so the HTMX swap does
+  not depend on real keyserver network round-trips. Runs in ~3.3
+  seconds locally, zero network dependency.
+  - New `just e2e` recipe runs `go test -tags e2e`
+  - `just lint` now passes `--build-tags e2e` so lint covers the
+    tagged file too
+  - CI workflow runs `just e2e` after `just build`
+  - `chromium@latest` added to `devbox.json`
+  - `github.com/chromedp/chromedp` added to `go.mod`
+
 ## v0.5.4 - 2026-04-11
 
 ### Fixed
