@@ -76,10 +76,23 @@ func WithServerSessionInterceptor() connect.HandlerOption {
 	return connect.WithInterceptors(serverSessionInterceptor{})
 }
 
+// clientSessionToken returns the token to stamp onto an outbound
+// request. Per-request context (set via ContextWithSessionToken) takes
+// priority over the process-global GPGSMITH_SESSION env var, so
+// multiple callers sharing one wire.Client — e.g., the web UI binding
+// each browser tab to its own daemon session — do not have to mutate
+// the process environment.
+func clientSessionToken(ctx context.Context) string {
+	if tok, ok := TokenFromContext(ctx); ok {
+		return tok
+	}
+	return os.Getenv(SessionEnvVar)
+}
+
 // WrapUnary implements connect.Interceptor for the client side.
 func (envSessionClientInterceptor) WrapUnary(next connect.UnaryFunc) connect.UnaryFunc {
 	return func(ctx context.Context, req connect.AnyRequest) (connect.AnyResponse, error) {
-		if tok := os.Getenv(SessionEnvVar); tok != "" {
+		if tok := clientSessionToken(ctx); tok != "" {
 			req.Header().Set(SessionHeader, tok)
 		}
 		return next(ctx, req)
@@ -89,7 +102,7 @@ func (envSessionClientInterceptor) WrapUnary(next connect.UnaryFunc) connect.Una
 func (envSessionClientInterceptor) WrapStreamingClient(next connect.StreamingClientFunc) connect.StreamingClientFunc {
 	return func(ctx context.Context, spec connect.Spec) connect.StreamingClientConn {
 		conn := next(ctx, spec)
-		if tok := os.Getenv(SessionEnvVar); tok != "" {
+		if tok := clientSessionToken(ctx); tok != "" {
 			conn.RequestHeader().Set(SessionHeader, tok)
 		}
 		return conn

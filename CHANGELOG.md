@@ -2,6 +2,27 @@
 
 ## Unreleased
 
+## v0.5.1 - 2026-04-11
+
+### Fixed
+
+- **Web UI session binding.** Every session-bearing RPC from the web UI
+  failed with `unauthenticated: no session token; set GPGSMITH_SESSION
+  or open a vault` once a user opened a vault and navigated to any
+  detail page (keys, identities, cards, servers, audit). The client-side
+  Connect interceptor in `pkg/wire/session_header.go` only read the
+  session token from `os.Getenv(GPGSMITH_SESSION)` and ignored tokens
+  stamped onto the per-request context via
+  `wire.ContextWithSessionToken`. The web UI uses the context-stamping
+  path so each browser tab can bind to its own daemon session without
+  mutating the process-global env var — and that path silently did
+  nothing. The interceptor now prefers the context-stamped token and
+  falls back to the env var. Added two regression tests in
+  `pkg/wire/wire_test.go` that exercise the real `NewHTTPClient` +
+  `WithEnvSessionInterceptor` path with a ctx-stamped token (one with
+  and one without a conflicting env var) to guard against future
+  regressions.
+
 ## v0.5.0 - 2026-04-11
 
 This release introduces **token-keyed sessions** and a **loopback-only web

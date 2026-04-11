@@ -312,6 +312,66 @@ func TestRoundTripMissingSessionToken(t *testing.T) {
 	}
 }
 
+// TestClientInterceptorContextToken verifies that a session token stamped
+// onto a request's context via ContextWithSessionToken is picked up by the
+// client-side interceptor and sent as the Gpgsmith-Session header. This is
+// the path the web UI uses to bind each browser tab to its own daemon
+// session without mutating the process-global GPGSMITH_SESSION env var.
+//
+// Regression: the v0.5.0 ship had a client interceptor that only read from
+// os.Getenv, ignoring the context, which broke every web UI session-bearing
+// RPC with an "unauthenticated: no session token" error.
+func TestClientInterceptorContextToken(t *testing.T) {
+	t.Setenv(SessionEnvVar, "") // ensure no env-var leakage from the host
+	backend := &fakeBackend{
+		listIdentitiesReturn: []gpg.UID{{Index: 1, Validity: "u"}},
+	}
+	srv := httptest.NewUnstartedServer(NewServer(backend).Handler())
+	srv.Start()
+	t.Cleanup(srv.Close)
+
+	// Build a client with the real production interceptor installed.
+	client := NewHTTPClient(srv.Client(), srv.URL, WithEnvSessionInterceptor())
+	t.Cleanup(client.Close)
+
+	ctx := ContextWithSessionToken(context.Background(), "tok-from-ctx")
+	_, err := client.Identity.List(ctx, connect.NewRequest(&v1.ListIdentitiesRequest{}))
+	if err != nil {
+		t.Fatalf("Identity.List with ctx-stamped token: %v", err)
+	}
+	if backend.listIdentitiesToken != "tok-from-ctx" {
+		t.Errorf("backend received token %q, want %q",
+			backend.listIdentitiesToken, "tok-from-ctx")
+	}
+}
+
+// TestClientInterceptorContextOverridesEnv verifies that when both a
+// context-stamped token and a GPGSMITH_SESSION env var are present, the
+// context token wins. This matters for CLI processes that auto-bind via
+// env var but also explicitly target a different session in one call.
+func TestClientInterceptorContextOverridesEnv(t *testing.T) {
+	t.Setenv(SessionEnvVar, "tok-from-env")
+	backend := &fakeBackend{
+		listIdentitiesReturn: []gpg.UID{{Index: 1, Validity: "u"}},
+	}
+	srv := httptest.NewUnstartedServer(NewServer(backend).Handler())
+	srv.Start()
+	t.Cleanup(srv.Close)
+
+	client := NewHTTPClient(srv.Client(), srv.URL, WithEnvSessionInterceptor())
+	t.Cleanup(client.Close)
+
+	ctx := ContextWithSessionToken(context.Background(), "tok-from-ctx")
+	_, err := client.Identity.List(ctx, connect.NewRequest(&v1.ListIdentitiesRequest{}))
+	if err != nil {
+		t.Fatalf("Identity.List: %v", err)
+	}
+	if backend.listIdentitiesToken != "tok-from-ctx" {
+		t.Errorf("ctx token should win over env var; backend saw %q, want tok-from-ctx",
+			backend.listIdentitiesToken)
+	}
+}
+
 func TestRoundTripBackendError(t *testing.T) {
 	backend := &fakeBackend{
 		listIdentitiesErr: errors.New("vault not open"),
